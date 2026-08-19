@@ -1,24 +1,41 @@
 # dependencies
-node_modules
+node_modules/
 
 # build output
-lib
+lib/
 *.tsbuildinfo
 
 # testing
-coverage
+coverage/
 
-# firebase
-.firebase
-firebase-debug.log
-firestore-debug.log
-ui-debug.log
-firebase-export-*
+# firebase (credenciales, cachés y logs locales)
+.firebase/
+.runtimeconfig.json
+firebase-export-*/
+*-debug.log
 
 # env
 .env
 .env.*
 !.env.example
 
-# misc
+# editores e IDEs
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+*~
+
+# sistema operativo
 .DS_Store
+Thumbs.db
+Desktop.ini
+.directory
+
+# logs
+*.log
+logs/
+
+# archivos locales de configuración de herramientas que no deben compartirse
+*.local
