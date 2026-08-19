@@ -14,8 +14,10 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
-    "test:watch": "vitest",
+    "test": "npm run test:unit && npm run test:integration",
+    "test:unit": "vitest run --config vitest.unit.config.mts",
+    "test:unit:watch": "vitest --config vitest.unit.config.mts",
+    "test:integration": "firebase emulators:exec --project demo-cinemaloop --only firestore,auth \"vitest run --config vitest.integration.config.mts\"",
     "serve": "npm run build && firebase emulators:start --only functions,firestore,auth",
     "emulators": "firebase emulators:start --only functions,firestore,auth"
   },
