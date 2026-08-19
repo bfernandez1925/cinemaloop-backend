@@ -23,7 +23,10 @@ src/
     gameEngine.ts      refreshTmdbPool, startGame, submitAnswer, finishGame
     scoring.ts         submitToLeaderboard, discardGame, getLeaderboard
     historial.ts        getUserGames
-test/                 tests (Vitest)
+test/
+  unit/               tests unitarios (lógica pura, sin emulador ni red)
+  integration/        tests de integración contra el Firebase Emulator Suite
+    mocks/            helpers para mockear TMDb/Claude (fetch) en tests de integración
 firestore.rules        reglas de seguridad (deny-all)
 firestore.indexes.json índices compuestos de Firestore
 firebase.json           configuración de despliegue y emuladores
@@ -54,12 +57,16 @@ Levanta los emuladores de Functions, Firestore y Auth (puertos 5001, 8080 y 9099
 ## Comprobaciones de calidad
 
 ```bash
-npm run lint         # ESLint
-npm run format:check # Prettier, solo verifica
-npm run format       # Prettier, aplica el formato
-npm run typecheck    # tsc --noEmit
-npm test             # Vitest
+npm run lint             # ESLint
+npm run format:check     # Prettier, solo verifica
+npm run format           # Prettier, aplica el formato
+npm run typecheck        # tsc --noEmit
+npm test                 # unit + integration
+npm run test:unit        # solo tests unitarios (rápidos, sin emulador)
+npm run test:integration # solo tests de integración (levanta y para el Firebase Emulator Suite automáticamente)
 ```
+
+Los tests de integración (`test/integration/`) corren contra el Firebase Emulator Suite (Firestore + Auth), que `npm run test:integration` levanta y para automáticamente vía `firebase emulators:exec` — no requiere pasos manuales ni un proyecto de Firebase real (usa el project id especial `demo-cinemaloop`, reconocido por el emulador sin necesidad de credenciales). Cualquier llamada a TMDb o a Claude debe mockearse con `mockFetchOnce` (`test/integration/mocks/externalServices.ts`); una llamada de red real no mockeada falla el test en vez de golpear la red, tanto en local como en CI.
 
 ## Build
 
