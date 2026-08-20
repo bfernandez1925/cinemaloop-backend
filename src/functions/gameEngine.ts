@@ -1,6 +1,7 @@
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import { db } from "../admin";
+import { ANTHROPIC_API_KEY, normalizeAnswer } from "../clients/claude";
 import {
   TMDB_API_KEY,
   fetchMovieCredits,
@@ -195,128 +196,154 @@ function buildNodeFromCandidate(
  * relación real con el nodo actual (filmografía/reparto) y que no esté
  * repetido. Ver spec-game-engine.md.
  */
-export const submitAnswer = onCall({ secrets: [TMDB_API_KEY] }, async (request) => {
-  if (!request.auth) {
-    throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
-  }
+export const submitAnswer = onCall(
+  { secrets: [TMDB_API_KEY, ANTHROPIC_API_KEY] },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
+    }
 
-  const { gameId, respuesta, tiempo_respuesta_segundos } = request.data ?? {};
-  if (typeof gameId !== "string" || gameId.trim().length === 0) {
-    throw new HttpsError("invalid-argument", "gameId es obligatorio.");
-  }
-  if (typeof respuesta !== "string" || respuesta.trim().length === 0) {
-    throw new HttpsError("invalid-argument", "respuesta es obligatoria.");
-  }
-  if (typeof tiempo_respuesta_segundos !== "number" || tiempo_respuesta_segundos < 0) {
-    throw new HttpsError("invalid-argument", "tiempo_respuesta_segundos debe ser un número >= 0.");
-  }
+    const { gameId, respuesta, tiempo_respuesta_segundos } = request.data ?? {};
+    if (typeof gameId !== "string" || gameId.trim().length === 0) {
+      throw new HttpsError("invalid-argument", "gameId es obligatorio.");
+    }
+    if (typeof respuesta !== "string" || respuesta.trim().length === 0) {
+      throw new HttpsError("invalid-argument", "respuesta es obligatoria.");
+    }
+    if (typeof tiempo_respuesta_segundos !== "number" || tiempo_respuesta_segundos < 0) {
+      throw new HttpsError(
+        "invalid-argument",
+        "tiempo_respuesta_segundos debe ser un número >= 0.",
+      );
+    }
 
-  const gameRef = db.collection("games").doc(gameId);
-  const gameSnapshot = await gameRef.get();
-  const game = gameSnapshot.data() as GameDoc | undefined;
-  if (!game) {
-    throw new HttpsError("not-found", "La partida no existe.");
-  }
-  if (game.userId !== request.auth.uid) {
-    throw new HttpsError("permission-denied", "Esta partida no pertenece al usuario autenticado.");
-  }
-  if (game.estado !== "en_curso") {
-    throw new HttpsError("failed-precondition", "La partida ya ha finalizado.");
-  }
+    const gameRef = db.collection("games").doc(gameId);
+    const gameSnapshot = await gameRef.get();
+    const game = gameSnapshot.data() as GameDoc | undefined;
+    if (!game) {
+      throw new HttpsError("not-found", "La partida no existe.");
+    }
+    if (game.userId !== request.auth.uid) {
+      throw new HttpsError(
+        "permission-denied",
+        "Esta partida no pertenece al usuario autenticado.",
+      );
+    }
+    if (game.estado !== "en_curso") {
+      throw new HttpsError("failed-precondition", "La partida ya ha finalizado.");
+    }
 
-  const ahoraIso = new Date().toISOString();
+    const ahoraIso = new Date().toISOString();
 
-  // Modo Maratón: sin límite de turno ni total, salvo inactividad
-  // prolongada (spec-game-engine.md, CIN-22).
-  if (
-    game.modo === "maraton" &&
-    game.ultima_actividad &&
-    hasExceededInactivityTimeout(
-      game.ultima_actividad,
-      ahoraIso,
-      MARATHON_INACTIVITY_TIMEOUT_SECONDS,
-    )
-  ) {
-    await gameRef.update({ estado: "finalizada" });
-    throw new HttpsError("failed-precondition", "La partida se cerró por inactividad.");
-  }
+    // Modo Maratón: sin límite de turno ni total, salvo inactividad
+    // prolongada (spec-game-engine.md, CIN-22).
+    if (
+      game.modo === "maraton" &&
+      game.ultima_actividad &&
+      hasExceededInactivityTimeout(
+        game.ultima_actividad,
+        ahoraIso,
+        MARATHON_INACTIVITY_TIMEOUT_SECONDS,
+      )
+    ) {
+      await gameRef.update({ estado: "finalizada" });
+      throw new HttpsError("failed-precondition", "La partida se cerró por inactividad.");
+    }
 
-  // Si el nodo actual es un actor, la respuesta esperada es una película
-  // de su filmografía, y viceversa.
-  const tipoEsperado: GameNode["tipo"] = game.nodo_actual.tipo === "actor" ? "pelicula" : "actor";
+    // Si el nodo actual es un actor, la respuesta esperada es una película
+    // de su filmografía, y viceversa.
+    const tipoEsperado: GameNode["tipo"] = game.nodo_actual.tipo === "actor" ? "pelicula" : "actor";
 
-  const candidatos: Array<TmdbMovieSummary | TmdbPersonSummary> =
-    tipoEsperado === "pelicula"
-      ? (await searchMovies(respuesta)).results
-      : (await searchPeople(respuesta)).results;
-  const candidato = pickMostPopular(candidatos);
+    // La IA normaliza el texto libre a nombres canónicos
+    // (spec-ai-interpretation.md); si falla o no devuelve nada
+    // razonable, se usa el texto original tal cual como único
+    // "candidato" (CIN-34) — el turno nunca se bloquea por un fallo de
+    // la IA. Con varios candidatos, se prueban en orden contra TMDb y se
+    // usa el primero que encaje con las reglas del turno.
+    const normalizado = await normalizeAnswer(respuesta);
+    const textosCandidatos =
+      normalizado && normalizado.candidatos.length > 0 ? normalizado.candidatos : [respuesta];
 
-  let correcto = false;
-  if (candidato && !isAlreadyUsed(game.usados, candidato.id)) {
-    const cast =
-      tipoEsperado === "pelicula"
-        ? (await fetchPersonMovieCredits(game.nodo_actual.entidad_tmdb_id)).cast
-        : (await fetchMovieCredits(game.nodo_actual.entidad_tmdb_id)).cast;
-    correcto = isInCast(cast, candidato.id);
-  }
+    let candidato: TmdbMovieSummary | TmdbPersonSummary | null = null;
+    let correcto = false;
+    for (const texto of textosCandidatos) {
+      const resultados: Array<TmdbMovieSummary | TmdbPersonSummary> =
+        tipoEsperado === "pelicula"
+          ? (await searchMovies(texto)).results
+          : (await searchPeople(texto)).results;
+      const mejorCandidato = pickMostPopular(resultados);
+      if (!mejorCandidato || isAlreadyUsed(game.usados, mejorCandidato.id)) {
+        continue;
+      }
+      const cast =
+        tipoEsperado === "pelicula"
+          ? (await fetchPersonMovieCredits(game.nodo_actual.entidad_tmdb_id)).cast
+          : (await fetchMovieCredits(game.nodo_actual.entidad_tmdb_id)).cast;
+      if (isInCast(cast, mejorCandidato.id)) {
+        candidato = mejorCandidato;
+        correcto = true;
+        break;
+      }
+    }
 
-  if (!correcto || !candidato) {
-    await gameRef.update({ estado: "finalizada", ultima_actividad: ahoraIso });
-    return { correcto: false, puntuacion_total: game.puntuacion_total };
-  }
+    if (!correcto || !candidato) {
+      await gameRef.update({ estado: "finalizada", ultima_actividad: ahoraIso });
+      return { correcto: false, puntuacion_total: game.puntuacion_total };
+    }
 
-  let nuevoNodo: GameNode = buildNodeFromCandidate(tipoEsperado, candidato);
-  if (nuevoNodo.tipo === "actor") {
-    const detalles = await fetchPersonDetails(nuevoNodo.entidad_tmdb_id);
-    nuevoNodo = toActorNode(nuevoNodo, detalles);
-  }
+    let nuevoNodo: GameNode = buildNodeFromCandidate(tipoEsperado, candidato);
+    if (nuevoNodo.tipo === "actor") {
+      const detalles = await fetchPersonDetails(nuevoNodo.entidad_tmdb_id);
+      nuevoNodo = toActorNode(nuevoNodo, detalles);
+    }
 
-  // El bonus de rapidez está atado al límite de turno de modo Clásico
-  // (25s); Contrarreloj y Maratón no tienen límite por turno, así que
-  // no tiene sentido aplicarlo — solo puntos base en esos modos.
-  const bonus =
-    game.modo === "clasico"
-      ? calculateSpeedBonus(TURN_TIME_LIMIT_SECONDS - tiempo_respuesta_segundos)
-      : 0;
-  const puntos = BASE_POINTS_PER_CORRECT_ANSWER + bonus;
-  const puntuacionTotal = game.puntuacion_total + puntos;
-  const tiempoAcumulado = (game.tiempo_acumulado ?? 0) + tiempo_respuesta_segundos;
+    // El bonus de rapidez está atado al límite de turno de modo Clásico
+    // (25s); Contrarreloj y Maratón no tienen límite por turno, así que
+    // no tiene sentido aplicarlo — solo puntos base en esos modos.
+    const bonus =
+      game.modo === "clasico"
+        ? calculateSpeedBonus(TURN_TIME_LIMIT_SECONDS - tiempo_respuesta_segundos)
+        : 0;
+    const puntos = BASE_POINTS_PER_CORRECT_ANSWER + bonus;
+    const puntuacionTotal = game.puntuacion_total + puntos;
+    const tiempoAcumulado = (game.tiempo_acumulado ?? 0) + tiempo_respuesta_segundos;
 
-  // Modo Contrarreloj: un único temporizador de 90s para toda la
-  // partida (spec-game-engine.md, CIN-21) — se comprueba tras sumar el
-  // turno actual, así que ese turno sigue contando en la puntuación.
-  const agotaContrarreloj =
-    game.modo === "contrarreloj" && tiempoAcumulado >= CONTRARRELOJ_TOTAL_TIME_LIMIT_SECONDS;
+    // Modo Contrarreloj: un único temporizador de 90s para toda la
+    // partida (spec-game-engine.md, CIN-21) — se comprueba tras sumar el
+    // turno actual, así que ese turno sigue contando en la puntuación.
+    const agotaContrarreloj =
+      game.modo === "contrarreloj" && tiempoAcumulado >= CONTRARRELOJ_TOTAL_TIME_LIMIT_SECONDS;
 
-  const batch = db.batch();
-  const turnoRef = gameRef.collection("turns").doc();
-  batch.set(turnoRef, {
-    orden: game.usados.length,
-    tipo: nuevoNodo.tipo,
-    entidad_tmdb_id: nuevoNodo.entidad_tmdb_id,
-    nombre: nuevoNodo.nombre,
-    tiempo_respuesta_segundos,
-    correcta: true,
-    puntos_obtenidos: puntos,
-  });
-  batch.update(gameRef, {
-    nodo_actual: nuevoNodo,
-    usados: [...game.usados, nuevoNodo.entidad_tmdb_id],
-    puntuacion_total: puntuacionTotal,
-    tiempo_acumulado: tiempoAcumulado,
-    ultima_actividad: ahoraIso,
-    ...(agotaContrarreloj ? { estado: "finalizada" } : {}),
-  });
-  await batch.commit();
+    const batch = db.batch();
+    const turnoRef = gameRef.collection("turns").doc();
+    batch.set(turnoRef, {
+      orden: game.usados.length,
+      tipo: nuevoNodo.tipo,
+      entidad_tmdb_id: nuevoNodo.entidad_tmdb_id,
+      nombre: nuevoNodo.nombre,
+      tiempo_respuesta_segundos,
+      correcta: true,
+      puntos_obtenidos: puntos,
+    });
+    batch.update(gameRef, {
+      nodo_actual: nuevoNodo,
+      usados: [...game.usados, nuevoNodo.entidad_tmdb_id],
+      puntuacion_total: puntuacionTotal,
+      tiempo_acumulado: tiempoAcumulado,
+      ultima_actividad: ahoraIso,
+      ...(agotaContrarreloj ? { estado: "finalizada" } : {}),
+    });
+    await batch.commit();
 
-  return {
-    correcto: true,
-    nodoActual: nuevoNodo,
-    puntos,
-    puntuacion_total: puntuacionTotal,
-    ...(agotaContrarreloj ? { partida_finalizada: true } : {}),
-  };
-});
+    return {
+      correcto: true,
+      nodoActual: nuevoNodo,
+      puntos,
+      puntuacion_total: puntuacionTotal,
+      ...(agotaContrarreloj ? { partida_finalizada: true } : {}),
+    };
+  },
+);
 
 /**
  * Finaliza una partida (por fallo, ya reflejado en `estado` por
