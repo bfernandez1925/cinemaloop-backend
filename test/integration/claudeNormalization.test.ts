@@ -79,4 +79,72 @@ describe("normalización con Claude en submitAnswer (CIN-33)", () => {
     expect(result.correcto).toBe(true);
     expect(result.nodoActual.nombre).toBe("Película Normalizada");
   });
+
+  it("una segunda partida con la misma respuesta reutiliza la caché de IA, sin volver a llamar a Claude (CIN-36)", async () => {
+    const respuesta = "peliqula cacheada (typo)";
+
+    const gameRef1 = await createGame();
+    mockFetchImplementation((url) => {
+      if (url.includes("api.anthropic.com")) {
+        return {
+          body: anthropicTextResponse('{"candidatos": ["Película Cacheada"], "confianza": "alta"}'),
+        };
+      }
+      if (url.includes("/search/movie")) {
+        return {
+          body: {
+            results: [
+              {
+                id: 101,
+                title: "Película Cacheada",
+                popularity: 50,
+                vote_count: 2000,
+                poster_path: null,
+              },
+            ],
+          },
+        };
+      }
+      if (url.includes("/person/7/movie_credits")) {
+        return { body: { cast: [{ id: 101 }] } };
+      }
+      throw new Error(`URL no esperada: ${url}`);
+    });
+    await submitAnswer.run(
+      callableRequest({ gameId: gameRef1.id, respuesta, tiempo_respuesta_segundos: 5 }, "user-1"),
+    );
+
+    // Segunda partida, mismo texto de respuesta: solo se mockea TMDb.
+    // Si submitAnswer llamara a Claude otra vez (sin usar la caché),
+    // chocaría con el guard de red real y caería al texto original,
+    // que no encuentra la película en TMDb — el turno fallaría.
+    const gameRef2 = await createGame();
+    mockFetchImplementation((url) => {
+      if (url.includes("/search/movie")) {
+        return {
+          body: {
+            results: [
+              {
+                id: 101,
+                title: "Película Cacheada",
+                popularity: 50,
+                vote_count: 2000,
+                poster_path: null,
+              },
+            ],
+          },
+        };
+      }
+      if (url.includes("/person/7/movie_credits")) {
+        return { body: { cast: [{ id: 101 }] } };
+      }
+      throw new Error(`URL no esperada (Claude no debería llamarse): ${url}`);
+    });
+
+    const result = (await submitAnswer.run(
+      callableRequest({ gameId: gameRef2.id, respuesta, tiempo_respuesta_segundos: 5 }, "user-1"),
+    )) as { correcto: boolean };
+
+    expect(result.correcto).toBe(true);
+  });
 });
