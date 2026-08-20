@@ -32,7 +32,7 @@ firestore.indexes.json índices compuestos de Firestore
 firebase.json           configuración de despliegue y emuladores
 ```
 
-Cada función exportada en `src/index.ts` corresponde a una Cloud Function real desplegada. En este scaffold inicial, las funciones están implementadas como stubs que lanzan `unimplemented`; cada una referencia la issue de Linear que la implementará.
+Cada función exportada en `src/index.ts` corresponde a una Cloud Function real desplegada. `onUserCreated` y `updateUsername` (auth) ya están implementadas; el resto siguen siendo stubs que lanzan `unimplemented`, cada uno referenciando la issue de Linear que lo implementará.
 
 ## Requisitos
 

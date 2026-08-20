@@ -21,13 +21,23 @@ export const onUserCreated = functionsV1.auth.user().onCreate(async (user) => {
 });
 
 /**
- * Actualiza el nombre de usuario del perfil autenticado.
- * Ver spec-auth.md, CIN-13.
+ * Actualiza el nombre de usuario del perfil autenticado. Solo opera
+ * sobre `request.auth.uid`: no existe ningún parámetro de uid que el
+ * cliente pueda manipular, así que no hay ninguna forma de modificar el
+ * documento de otro usuario. Ver spec-auth.md.
  */
 export const updateUsername = onCall(async (request) => {
   if (!request.auth) {
     throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
   }
 
-  throw new HttpsError("unimplemented", "updateUsername: pendiente de implementar (CIN-13).");
+  const nombreUsuario = request.data?.nombre_usuario;
+  if (typeof nombreUsuario !== "string" || nombreUsuario.trim().length === 0) {
+    throw new HttpsError("invalid-argument", "nombre_usuario es obligatorio.");
+  }
+
+  await db
+    .collection("users")
+    .doc(request.auth.uid)
+    .update({ nombre_usuario: nombreUsuario.trim() });
 });
