@@ -26,6 +26,31 @@ export const onUserCreated = functionsV1
   });
 
 /**
+ * Devuelve los agregados de perfil del usuario autenticado
+ * (`mejor_puntuacion`/`cadena_mas_larga`/`partidas_jugadas`, ver
+ * spec-historial.md y CIN-30) más su nombre de usuario. Solo opera sobre
+ * `request.auth.uid`, igual que `updateUsername` — no hay ningún
+ * parámetro de uid que el cliente pueda manipular. Si el documento no
+ * existe (no debería pasar tras `onUserCreated`, pero por robustez), se
+ * devuelven los agregados a 0 en vez de lanzar un error.
+ */
+export const getUserProfile = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
+  }
+
+  const snapshot = await db.collection("users").doc(request.auth.uid).get();
+  const data = snapshot.data();
+
+  return {
+    nombre_usuario: (data?.nombre_usuario as string | null | undefined) ?? null,
+    mejor_puntuacion: (data?.mejor_puntuacion as number | undefined) ?? 0,
+    cadena_mas_larga: (data?.cadena_mas_larga as number | undefined) ?? 0,
+    partidas_jugadas: (data?.partidas_jugadas as number | undefined) ?? 0,
+  };
+});
+
+/**
  * Actualiza el nombre de usuario del perfil autenticado. Solo opera
  * sobre `request.auth.uid`: no existe ningún parámetro de uid que el
  * cliente pueda manipular, así que no hay ninguna forma de modificar el
