@@ -67,6 +67,18 @@ export function isInCast(cast: Array<{ id: number }>, tmdbId: number): boolean {
   return cast.some((entry) => entry.id === tmdbId);
 }
 
+export interface GameDoc {
+  userId: string;
+  estado: "en_curso" | "finalizada";
+  nodo_actual: GameNode;
+  usados: number[];
+  puntuacion_total: number;
+  nodos_alcanzados?: number;
+  tiempo_total?: number;
+  tiempo_medio_respuesta?: number;
+  enviada_a_ranking?: boolean;
+}
+
 export interface TurnRecord {
   tiempo_respuesta_segundos: number;
 }
