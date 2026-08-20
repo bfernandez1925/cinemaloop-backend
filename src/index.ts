@@ -5,7 +5,7 @@ import { FUNCTIONS_REGION } from "./config/firebase";
 // fija la región por defecto para todas las Cloud Functions v2.
 setGlobalOptions({ region: FUNCTIONS_REGION });
 
-export { onUserCreated, updateUsername } from "./functions/auth";
+export { onUserCreated, updateUsername, getUserProfile } from "./functions/auth";
 export { refreshTmdbPool, startGame, submitAnswer, finishGame } from "./functions/gameEngine";
 export { submitToLeaderboard, saveGame, discardGame, getLeaderboard } from "./functions/scoring";
 export { getUserGames } from "./functions/historial";
