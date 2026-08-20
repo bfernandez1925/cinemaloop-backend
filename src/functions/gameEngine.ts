@@ -14,6 +14,8 @@ import {
   type TmdbPersonSummary,
 } from "../clients/tmdb";
 import {
+  CONTRARRELOJ_TOTAL_TIME_LIMIT_SECONDS,
+  MARATHON_INACTIVITY_TIMEOUT_SECONDS,
   TMDB_POOL_MOVIE_SHARE,
   TMDB_POOL_TARGET_SIZE,
   TMDB_POPULAR_MAX_PAGES,
@@ -24,6 +26,7 @@ import { BASE_POINTS_PER_CORRECT_ANSWER } from "../config/scoring";
 import { calculateSpeedBonus } from "../lib/scoring";
 import {
   GAME_MODES,
+  hasExceededInactivityTimeout,
   isAlreadyUsed,
   isInCast,
   pickMostPopular,
@@ -157,6 +160,8 @@ export const startGame = onCall({ secrets: [TMDB_API_KEY] }, async (request) => 
     nodo_actual: nodoActual,
     usados: [nodoActual.entidad_tmdb_id],
     puntuacion_total: 0,
+    tiempo_acumulado: 0,
+    ultima_actividad: new Date().toISOString(),
   });
 
   return { gameId: gameRef.id, nodoActual };
@@ -219,6 +224,23 @@ export const submitAnswer = onCall({ secrets: [TMDB_API_KEY] }, async (request) 
     throw new HttpsError("failed-precondition", "La partida ya ha finalizado.");
   }
 
+  const ahoraIso = new Date().toISOString();
+
+  // Modo Maratón: sin límite de turno ni total, salvo inactividad
+  // prolongada (spec-game-engine.md, CIN-22).
+  if (
+    game.modo === "maraton" &&
+    game.ultima_actividad &&
+    hasExceededInactivityTimeout(
+      game.ultima_actividad,
+      ahoraIso,
+      MARATHON_INACTIVITY_TIMEOUT_SECONDS,
+    )
+  ) {
+    await gameRef.update({ estado: "finalizada" });
+    throw new HttpsError("failed-precondition", "La partida se cerró por inactividad.");
+  }
+
   // Si el nodo actual es un actor, la respuesta esperada es una película
   // de su filmografía, y viceversa.
   const tipoEsperado: GameNode["tipo"] = game.nodo_actual.tipo === "actor" ? "pelicula" : "actor";
@@ -239,7 +261,7 @@ export const submitAnswer = onCall({ secrets: [TMDB_API_KEY] }, async (request) 
   }
 
   if (!correcto || !candidato) {
-    await gameRef.update({ estado: "finalizada" });
+    await gameRef.update({ estado: "finalizada", ultima_actividad: ahoraIso });
     return { correcto: false, puntuacion_total: game.puntuacion_total };
   }
 
@@ -249,10 +271,22 @@ export const submitAnswer = onCall({ secrets: [TMDB_API_KEY] }, async (request) 
     nuevoNodo = toActorNode(nuevoNodo, detalles);
   }
 
-  const tiempoRestante = TURN_TIME_LIMIT_SECONDS - tiempo_respuesta_segundos;
-  const bonus = calculateSpeedBonus(tiempoRestante);
+  // El bonus de rapidez está atado al límite de turno de modo Clásico
+  // (25s); Contrarreloj y Maratón no tienen límite por turno, así que
+  // no tiene sentido aplicarlo — solo puntos base en esos modos.
+  const bonus =
+    game.modo === "clasico"
+      ? calculateSpeedBonus(TURN_TIME_LIMIT_SECONDS - tiempo_respuesta_segundos)
+      : 0;
   const puntos = BASE_POINTS_PER_CORRECT_ANSWER + bonus;
   const puntuacionTotal = game.puntuacion_total + puntos;
+  const tiempoAcumulado = (game.tiempo_acumulado ?? 0) + tiempo_respuesta_segundos;
+
+  // Modo Contrarreloj: un único temporizador de 90s para toda la
+  // partida (spec-game-engine.md, CIN-21) — se comprueba tras sumar el
+  // turno actual, así que ese turno sigue contando en la puntuación.
+  const agotaContrarreloj =
+    game.modo === "contrarreloj" && tiempoAcumulado >= CONTRARRELOJ_TOTAL_TIME_LIMIT_SECONDS;
 
   const batch = db.batch();
   const turnoRef = gameRef.collection("turns").doc();
@@ -269,10 +303,19 @@ export const submitAnswer = onCall({ secrets: [TMDB_API_KEY] }, async (request) 
     nodo_actual: nuevoNodo,
     usados: [...game.usados, nuevoNodo.entidad_tmdb_id],
     puntuacion_total: puntuacionTotal,
+    tiempo_acumulado: tiempoAcumulado,
+    ultima_actividad: ahoraIso,
+    ...(agotaContrarreloj ? { estado: "finalizada" } : {}),
   });
   await batch.commit();
 
-  return { correcto: true, nodoActual: nuevoNodo, puntos, puntuacion_total: puntuacionTotal };
+  return {
+    correcto: true,
+    nodoActual: nuevoNodo,
+    puntos,
+    puntuacion_total: puntuacionTotal,
+    ...(agotaContrarreloj ? { partida_finalizada: true } : {}),
+  };
 });
 
 /**

@@ -7,6 +7,17 @@
 /** Límite de tiempo por turno en modo Clásico (segundos), fuente de verdad server-side. */
 export const TURN_TIME_LIMIT_SECONDS = 25;
 
+/** Límite de tiempo total (no por turno) en modo Contrarreloj (segundos). */
+export const CONTRARRELOJ_TOTAL_TIME_LIMIT_SECONDS = 90;
+
+/**
+ * Umbral de inactividad en modo Maratón (segundos) antes de finalizar la
+ * partida automáticamente. No especificado en la spec ("a definir el
+ * umbral de inactividad al implementar", ver CIN-22); se fija en 5
+ * minutos como valor razonable para una partida sin límite de turno.
+ */
+export const MARATHON_INACTIVITY_TIMEOUT_SECONDS = 300;
+
 /** Tamaño objetivo del pool de inicio de partida (rango exigido: 500-1000). */
 export const TMDB_POOL_TARGET_SIZE = 750;
 

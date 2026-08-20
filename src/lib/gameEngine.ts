@@ -69,6 +69,7 @@ export function isInCast(cast: Array<{ id: number }>, tmdbId: number): boolean {
 
 export interface GameDoc {
   userId: string;
+  modo: GameMode;
   estado: "en_curso" | "finalizada";
   nodo_actual: GameNode;
   usados: number[];
@@ -78,6 +79,24 @@ export interface GameDoc {
   tiempo_medio_respuesta?: number;
   enviada_a_ranking?: boolean;
   agregados_actualizados?: boolean;
+  /** Suma de tiempo_respuesta_segundos de los turnos superados (modo Contrarreloj). */
+  tiempo_acumulado?: number;
+  /** ISO de la última llamada a submitAnswer sobre esta partida (modo Maratón). */
+  ultima_actividad?: string;
+}
+
+/**
+ * Detecta si ha pasado más tiempo del permitido desde la última
+ * actividad registrada en la partida (modo Maratón). Ver
+ * spec-game-engine.md — el umbral en sí vive en config/gameEngine.ts.
+ */
+export function hasExceededInactivityTimeout(
+  ultimaActividadIso: string,
+  ahoraIso: string,
+  timeoutSegundos: number,
+): boolean {
+  const transcurridoMs = new Date(ahoraIso).getTime() - new Date(ultimaActividadIso).getTime();
+  return transcurridoMs > timeoutSegundos * 1000;
 }
 
 export interface TurnRecord {
