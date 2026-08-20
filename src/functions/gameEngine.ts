@@ -3,9 +3,13 @@ import { onSchedule } from "firebase-functions/v2/scheduler";
 import { db } from "../admin";
 import {
   TMDB_API_KEY,
+  fetchMovieCredits,
   fetchPersonDetails,
+  fetchPersonMovieCredits,
   fetchPopularMovies,
   fetchPopularPeople,
+  searchMovies,
+  searchPeople,
   type TmdbMovieSummary,
   type TmdbPersonSummary,
 } from "../clients/tmdb";
@@ -15,12 +19,16 @@ import {
   TMDB_POPULAR_MAX_PAGES,
   TMDB_POPULAR_MOVIE_MIN_VOTE_COUNT,
 } from "../config/gameEngine";
+import { BASE_POINTS_PER_CORRECT_ANSWER } from "../config/scoring";
 import {
   GAME_MODES,
+  isAlreadyUsed,
+  isInCast,
+  pickMostPopular,
+  toActorNode,
   type GameMode,
   type GameNode,
   type PoolEntity,
-  toActorNode,
 } from "../lib/gameEngine";
 
 function movieToPoolEntity(movie: TmdbMovieSummary): PoolEntity {
@@ -150,16 +158,123 @@ export const startGame = onCall({ secrets: [TMDB_API_KEY] }, async (request) => 
   return { gameId: gameRef.id, nodoActual };
 });
 
+interface GameDoc {
+  userId: string;
+  estado: "en_curso" | "finalizada";
+  nodo_actual: GameNode;
+  usados: number[];
+  puntuacion_total: number;
+}
+
+function buildNodeFromCandidate(
+  tipo: GameNode["tipo"],
+  candidate: TmdbMovieSummary | TmdbPersonSummary,
+): PoolEntity {
+  if (tipo === "pelicula") {
+    const movie = candidate as TmdbMovieSummary;
+    return {
+      tipo: "pelicula",
+      entidad_tmdb_id: movie.id,
+      nombre: movie.title,
+      imagen: movie.poster_path,
+    };
+  }
+  const person = candidate as TmdbPersonSummary;
+  return {
+    tipo: "actor",
+    entidad_tmdb_id: person.id,
+    nombre: person.name,
+    imagen: person.profile_path,
+  };
+}
+
 /**
- * Valida la respuesta del jugador contra TMDb y las reglas del juego.
- * Ver spec-game-engine.md, CIN-18.
+ * Valida la respuesta del jugador contra TMDb y las reglas del juego:
+ * busca el candidato de mayor `popularity`, comprueba que tenga
+ * relación real con el nodo actual (filmografía/reparto) y que no esté
+ * repetido. Ver spec-game-engine.md.
  */
-export const submitAnswer = onCall(async (request) => {
+export const submitAnswer = onCall({ secrets: [TMDB_API_KEY] }, async (request) => {
   if (!request.auth) {
     throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
   }
 
-  throw new HttpsError("unimplemented", "submitAnswer: pendiente de implementar (CIN-18).");
+  const { gameId, respuesta, tiempo_respuesta_segundos } = request.data ?? {};
+  if (typeof gameId !== "string" || gameId.trim().length === 0) {
+    throw new HttpsError("invalid-argument", "gameId es obligatorio.");
+  }
+  if (typeof respuesta !== "string" || respuesta.trim().length === 0) {
+    throw new HttpsError("invalid-argument", "respuesta es obligatoria.");
+  }
+  if (typeof tiempo_respuesta_segundos !== "number" || tiempo_respuesta_segundos < 0) {
+    throw new HttpsError("invalid-argument", "tiempo_respuesta_segundos debe ser un número >= 0.");
+  }
+
+  const gameRef = db.collection("games").doc(gameId);
+  const gameSnapshot = await gameRef.get();
+  const game = gameSnapshot.data() as GameDoc | undefined;
+  if (!game) {
+    throw new HttpsError("not-found", "La partida no existe.");
+  }
+  if (game.userId !== request.auth.uid) {
+    throw new HttpsError("permission-denied", "Esta partida no pertenece al usuario autenticado.");
+  }
+  if (game.estado !== "en_curso") {
+    throw new HttpsError("failed-precondition", "La partida ya ha finalizado.");
+  }
+
+  // Si el nodo actual es un actor, la respuesta esperada es una película
+  // de su filmografía, y viceversa.
+  const tipoEsperado: GameNode["tipo"] = game.nodo_actual.tipo === "actor" ? "pelicula" : "actor";
+
+  const candidatos: Array<TmdbMovieSummary | TmdbPersonSummary> =
+    tipoEsperado === "pelicula"
+      ? (await searchMovies(respuesta)).results
+      : (await searchPeople(respuesta)).results;
+  const candidato = pickMostPopular(candidatos);
+
+  let correcto = false;
+  if (candidato && !isAlreadyUsed(game.usados, candidato.id)) {
+    const cast =
+      tipoEsperado === "pelicula"
+        ? (await fetchPersonMovieCredits(game.nodo_actual.entidad_tmdb_id)).cast
+        : (await fetchMovieCredits(game.nodo_actual.entidad_tmdb_id)).cast;
+    correcto = isInCast(cast, candidato.id);
+  }
+
+  if (!correcto || !candidato) {
+    await gameRef.update({ estado: "finalizada" });
+    return { correcto: false, puntuacion_total: game.puntuacion_total };
+  }
+
+  let nuevoNodo: GameNode = buildNodeFromCandidate(tipoEsperado, candidato);
+  if (nuevoNodo.tipo === "actor") {
+    const detalles = await fetchPersonDetails(nuevoNodo.entidad_tmdb_id);
+    nuevoNodo = toActorNode(nuevoNodo, detalles);
+  }
+
+  const puntos = BASE_POINTS_PER_CORRECT_ANSWER;
+  const puntuacionTotal = game.puntuacion_total + puntos;
+
+  const batch = db.batch();
+  const turnoRef = gameRef.collection("turns").doc();
+  batch.set(turnoRef, {
+    orden: game.usados.length,
+    tipo: nuevoNodo.tipo,
+    entidad_tmdb_id: nuevoNodo.entidad_tmdb_id,
+    nombre: nuevoNodo.nombre,
+    tiempo_respuesta_segundos,
+    correcta: true,
+    puntos_obtenidos: puntos,
+  });
+  batch.update(gameRef, {
+    nodo_actual: nuevoNodo,
+    usados: [...game.usados, nuevoNodo.entidad_tmdb_id],
+    puntuacion_total: puntuacionTotal,
+  });
+  await batch.commit();
+
+  return { correcto: true, nodoActual: nuevoNodo, puntos, puntuacion_total: puntuacionTotal };
 });
 
 /**

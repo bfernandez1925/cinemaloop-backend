@@ -1,0 +1,203 @@
+import type { CallableRequest } from "firebase-functions/v2/https";
+import { describe, expect, it } from "vitest";
+import { db } from "../../src/admin";
+import { submitAnswer } from "../../src/functions/gameEngine";
+import { mockFetchImplementation, mockFetchOnce } from "./mocks/externalServices";
+
+function callableRequest(data: unknown, uid: string | null): CallableRequest {
+  return {
+    data,
+    auth: uid === null ? undefined : ({ uid } as CallableRequest["auth"]),
+  } as CallableRequest;
+}
+
+async function createGame(overrides: Record<string, unknown> = {}) {
+  const gameRef = db.collection("games").doc();
+  await gameRef.set({
+    userId: "user-1",
+    modo: "clasico",
+    estado: "en_curso",
+    nodo_actual: { tipo: "actor", entidad_tmdb_id: 7, nombre: "Un actor", imagen: null },
+    usados: [7],
+    puntuacion_total: 0,
+    ...overrides,
+  });
+  return gameRef;
+}
+
+describe("submitAnswer", () => {
+  it("rechaza peticiones no autenticadas", async () => {
+    await expect(
+      submitAnswer.run(
+        callableRequest({ gameId: "x", respuesta: "x", tiempo_respuesta_segundos: 1 }, null),
+      ),
+    ).rejects.toMatchObject({ code: "unauthenticated" });
+  });
+
+  it("rechaza si la partida no pertenece al usuario autenticado", async () => {
+    const gameRef = await createGame();
+    await expect(
+      submitAnswer.run(
+        callableRequest(
+          { gameId: gameRef.id, respuesta: "x", tiempo_respuesta_segundos: 1 },
+          "otro-usuario",
+        ),
+      ),
+    ).rejects.toMatchObject({ code: "permission-denied" });
+  });
+
+  it("rechaza si la partida ya está finalizada", async () => {
+    const gameRef = await createGame({ estado: "finalizada" });
+    await expect(
+      submitAnswer.run(
+        callableRequest(
+          { gameId: gameRef.id, respuesta: "x", tiempo_respuesta_segundos: 1 },
+          "user-1",
+        ),
+      ),
+    ).rejects.toMatchObject({ code: "failed-precondition" });
+  });
+
+  it("turno válido: añade turno, actualiza nodo_actual/usados, suma puntos", async () => {
+    const gameRef = await createGame();
+    mockFetchImplementation((url) => {
+      if (url.includes("/search/movie")) {
+        return {
+          body: {
+            results: [
+              {
+                id: 100,
+                title: "Película correcta",
+                popularity: 50,
+                vote_count: 2000,
+                poster_path: null,
+              },
+            ],
+          },
+        };
+      }
+      if (url.includes("/person/7/movie_credits")) {
+        return { body: { cast: [{ id: 100 }] } };
+      }
+      throw new Error(`URL no esperada: ${url}`);
+    });
+
+    const result = (await submitAnswer.run(
+      callableRequest(
+        { gameId: gameRef.id, respuesta: "Película correcta", tiempo_respuesta_segundos: 5 },
+        "user-1",
+      ),
+    )) as { correcto: boolean; puntos: number; puntuacion_total: number };
+
+    expect(result).toMatchObject({ correcto: true, puntos: 100, puntuacion_total: 100 });
+
+    const gameSnapshot = await gameRef.get();
+    expect(gameSnapshot.data()).toMatchObject({
+      usados: [7, 100],
+      puntuacion_total: 100,
+      nodo_actual: { tipo: "pelicula", entidad_tmdb_id: 100, nombre: "Película correcta" },
+    });
+
+    const turnsSnapshot = await gameRef.collection("turns").get();
+    expect(turnsSnapshot.docs).toHaveLength(1);
+    expect(turnsSnapshot.docs[0]?.data()).toMatchObject({ correcta: true, puntos_obtenidos: 100 });
+  });
+
+  it("turno inválido (sin relación real con el nodo actual): finaliza la partida conservando la puntuación", async () => {
+    const gameRef = await createGame({ puntuacion_total: 300 });
+    mockFetchImplementation((url) => {
+      if (url.includes("/search/movie")) {
+        return {
+          body: {
+            results: [
+              {
+                id: 200,
+                title: "Película sin relación",
+                popularity: 50,
+                vote_count: 2000,
+                poster_path: null,
+              },
+            ],
+          },
+        };
+      }
+      if (url.includes("/person/7/movie_credits")) {
+        return { body: { cast: [{ id: 999 }] } };
+      }
+      throw new Error(`URL no esperada: ${url}`);
+    });
+
+    const result = (await submitAnswer.run(
+      callableRequest(
+        { gameId: gameRef.id, respuesta: "Película sin relación", tiempo_respuesta_segundos: 5 },
+        "user-1",
+      ),
+    )) as { correcto: boolean; puntuacion_total: number };
+
+    expect(result).toEqual({ correcto: false, puntuacion_total: 300 });
+
+    const gameSnapshot = await gameRef.get();
+    expect(gameSnapshot.data()?.estado).toBe("finalizada");
+    expect(gameSnapshot.data()?.puntuacion_total).toBe(300);
+  });
+
+  it("entidad repetida: rechaza aunque sea una respuesta real y finaliza la partida", async () => {
+    const gameRef = await createGame({ usados: [7, 100] });
+    mockFetchOnce({
+      results: [
+        { id: 100, title: "Ya usada", popularity: 50, vote_count: 2000, poster_path: null },
+      ],
+    });
+
+    const result = (await submitAnswer.run(
+      callableRequest(
+        { gameId: gameRef.id, respuesta: "Ya usada", tiempo_respuesta_segundos: 5 },
+        "user-1",
+      ),
+    )) as { correcto: boolean };
+
+    expect(result.correcto).toBe(false);
+  });
+
+  it("ambigüedad: elige el candidato de mayor popularity sin bloquear el turno", async () => {
+    const gameRef = await createGame();
+    mockFetchImplementation((url) => {
+      if (url.includes("/search/movie")) {
+        return {
+          body: {
+            results: [
+              {
+                id: 300,
+                title: "Menos popular",
+                popularity: 10,
+                vote_count: 2000,
+                poster_path: null,
+              },
+              {
+                id: 301,
+                title: "Más popular",
+                popularity: 90,
+                vote_count: 2000,
+                poster_path: null,
+              },
+            ],
+          },
+        };
+      }
+      if (url.includes("/person/7/movie_credits")) {
+        return { body: { cast: [{ id: 301 }] } };
+      }
+      throw new Error(`URL no esperada: ${url}`);
+    });
+
+    const result = (await submitAnswer.run(
+      callableRequest(
+        { gameId: gameRef.id, respuesta: "Popular", tiempo_respuesta_segundos: 5 },
+        "user-1",
+      ),
+    )) as { correcto: boolean; nodoActual: { entidad_tmdb_id: number; nombre: string } };
+
+    expect(result.correcto).toBe(true);
+    expect(result.nodoActual).toMatchObject({ entidad_tmdb_id: 301, nombre: "Más popular" });
+  });
+});
