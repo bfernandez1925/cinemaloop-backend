@@ -25,6 +25,7 @@ import {
   isAlreadyUsed,
   isInCast,
   pickMostPopular,
+  summarizeTurns,
   toActorNode,
   type GameMode,
   type GameNode,
@@ -278,13 +279,43 @@ export const submitAnswer = onCall({ secrets: [TMDB_API_KEY] }, async (request) 
 });
 
 /**
- * Finaliza una partida (por fallo o retirada voluntaria) y calcula sus
- * estadísticas finales. Ver spec-game-engine.md, CIN-19.
+ * Finaliza una partida (por fallo, ya reflejado en `estado` por
+ * `submitAnswer`, o por retirada voluntaria) y calcula sus estadísticas
+ * finales a partir de los turnos superados. No envía nada al ranking ni
+ * actualiza agregados de usuario (spec-historial.md, issue aparte). Ver
+ * spec-game-engine.md.
  */
 export const finishGame = onCall(async (request) => {
   if (!request.auth) {
     throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
   }
 
-  throw new HttpsError("unimplemented", "finishGame: pendiente de implementar (CIN-19).");
+  const { gameId } = request.data ?? {};
+  if (typeof gameId !== "string" || gameId.trim().length === 0) {
+    throw new HttpsError("invalid-argument", "gameId es obligatorio.");
+  }
+
+  const gameRef = db.collection("games").doc(gameId);
+  const gameSnapshot = await gameRef.get();
+  const game = gameSnapshot.data() as GameDoc | undefined;
+  if (!game) {
+    throw new HttpsError("not-found", "La partida no existe.");
+  }
+  if (game.userId !== request.auth.uid) {
+    throw new HttpsError("permission-denied", "Esta partida no pertenece al usuario autenticado.");
+  }
+
+  const turnsSnapshot = await gameRef.collection("turns").get();
+  const turns = turnsSnapshot.docs.map(
+    (doc) => doc.data() as { tiempo_respuesta_segundos: number },
+  );
+  const resumen = summarizeTurns(turns);
+
+  await gameRef.update({
+    estado: "finalizada",
+    enviada_a_ranking: false,
+    ...resumen,
+  });
+
+  return { puntuacion_total: game.puntuacion_total, ...resumen };
 });
