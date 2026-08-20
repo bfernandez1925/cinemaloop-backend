@@ -90,11 +90,15 @@ Firebase Authentication, solo email/contraseña en el MVP (ver `spec-auth.md`). 
 
 ## Despliegue
 
+Proyecto de Firebase real: `cinemaloop-platform` (plan Blaze, cuenta `bfernandez@intermarkit.es`), ya configurado como `default` en `.firebaserc`.
+
 ```bash
+firebase login                                       # si no has iniciado sesión con bfernandez@intermarkit.es
+firebase functions:secrets:set TMDB_API_KEY           # una vez; pide el valor de forma oculta
 firebase deploy --only functions,firestore:rules
 ```
 
-Requiere haber sustituido `REPLACE_WITH_FIREBASE_PROJECT_ID` en `.firebaserc` por el ID de un proyecto de Firebase real y estar autenticado con `firebase login`. No se ha configurado ningún proyecto real todavía.
+`TMDB_API_KEY` se consume vía `firebase-functions/params` (`defineSecret`): en local usa `.env` (ver arriba), en producción usa este secreto de Secret Manager — nunca hace falta poner el valor real en ningún archivo del repositorio.
 
 ## Relación con el resto del proyecto
 
