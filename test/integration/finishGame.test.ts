@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { DocumentReference } from "firebase-admin/firestore";
 import type { CallableRequest } from "firebase-functions/v2/https";
 import { describe, expect, it } from "vitest";
@@ -108,5 +109,15 @@ describe("finishGame", () => {
     };
 
     expect(result).toMatchObject({ puntuacion_total: 200, nodos_alcanzados: 1 });
+  });
+
+  it("nunca actualiza los agregados de usuario directamente (eso ocurre al guardar/enviar, CIN-30)", async () => {
+    const uid = randomUUID();
+    const gameRef = await createGame({ userId: uid, puntuacion_total: 999 });
+
+    await finishGame.run(callableRequest({ gameId: gameRef.id }, uid));
+
+    const userSnapshot = await db.collection("users").doc(uid).get();
+    expect(userSnapshot.exists).toBe(false);
   });
 });

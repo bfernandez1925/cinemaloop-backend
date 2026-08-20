@@ -48,9 +48,9 @@ describe("submitToLeaderboard", () => {
     ).rejects.toMatchObject({ code: "failed-precondition" });
   });
 
-  it("crea leaderboard/{gameId} y marca enviada_a_ranking: true", async () => {
+  it("crea leaderboard/{gameId}, marca enviada_a_ranking: true, y actualiza los agregados de usuario", async () => {
     const uid = randomUUID();
-    await db.collection("users").doc(uid).set({ nombre_usuario: "Jugador X" });
+    await db.collection("users").doc(uid).set({ nombre_usuario: "Jugador X", partidas_jugadas: 0 });
     const gameRef = await createFinishedGame({ userId: uid });
 
     const result = (await submitToLeaderboard.run(
@@ -70,6 +70,10 @@ describe("submitToLeaderboard", () => {
 
     const gameSnapshot = await gameRef.get();
     expect(gameSnapshot.data()?.enviada_a_ranking).toBe(true);
+
+    // "Enviar al ranking" también cuenta como partida guardada/jugada (CIN-30).
+    const userSnapshot = await db.collection("users").doc(uid).get();
+    expect(userSnapshot.data()).toMatchObject({ mejor_puntuacion: 300, partidas_jugadas: 1 });
   });
 });
 
