@@ -3,6 +3,7 @@ import type { CallableRequest } from "firebase-functions/v2/https";
 import { describe, expect, it } from "vitest";
 import { db } from "../../src/admin";
 import { getUserGames } from "../../src/functions/historial";
+import { discardGame } from "../../src/functions/scoring";
 
 function callableRequest(data: unknown, uid: string | null): CallableRequest {
   return {
@@ -45,16 +46,38 @@ describe("getUserGames", () => {
     expect(result.partidas).toHaveLength(1);
   });
 
-  it("las partidas descartadas nunca aparecen (ya no existen en Firestore)", async () => {
+  it("las partidas descartadas nunca aparecen (CIN-31)", async () => {
     const uid = randomUUID();
-    await createGame(uid);
+    const keptRef = db.collection("games").doc();
+    await keptRef.set({
+      userId: uid,
+      modo: "clasico",
+      estado: "finalizada",
+      fecha: "2026-01-01T00:00:00.000Z",
+      puntuacion_total: 100,
+      nodos_alcanzados: 1,
+      enviada_a_ranking: false,
+    });
+    const discardedRef = db.collection("games").doc();
+    await discardedRef.set({
+      userId: uid,
+      modo: "clasico",
+      estado: "finalizada",
+      fecha: "2026-01-02T00:00:00.000Z",
+      puntuacion_total: 999,
+      nodos_alcanzados: 9,
+      enviada_a_ranking: false,
+    });
+
+    await discardGame.run({
+      data: { gameId: discardedRef.id },
+      auth: { uid } as CallableRequest["auth"],
+    } as CallableRequest);
 
     const result = (await getUserGames.run(callableRequest({}, uid))) as {
-      partidas: unknown[];
+      partidas: Array<{ gameId: string }>;
     };
-    expect(result.partidas).toHaveLength(1);
-    // discardGame ya se prueba en scoring.test.ts (borra el documento entero);
-    // aquí basta confirmar que getUserGames solo puede ver lo que existe.
+    expect(result.partidas.map((p) => p.gameId)).toEqual([keptRef.id]);
   });
 
   it("excluye partidas todavía en curso (no finalizadas)", async () => {
