@@ -82,7 +82,7 @@ Compila TypeScript a `lib/`, que es lo que Firebase despliega.
 
 ## Variables de entorno
 
-Copiar `.env.example` a `.env` y completar con las claves reales de TMDb y Anthropic para desarrollo local. Ninguna clave se expone nunca al cliente ni se commitea al repositorio. Este proyecto no gestiona todavía entornos reales (desarrollo/staging/producción) — esa configuración, y el proyecto de Firebase asociado en `.firebaserc`, se abordarán más adelante.
+Copiar `.env.example` a **`.env.local`** (no `.env`: ese archivo se despliega tal cual como variables de entorno en texto plano, lo que choca con el secreto de Secret Manager del mismo nombre y rompe el deploy) y completar con las claves reales de TMDb y Anthropic para desarrollo local. Ninguna clave se expone nunca al cliente ni se commitea al repositorio.
 
 ## Autenticación
 
@@ -98,7 +98,7 @@ firebase functions:secrets:set TMDB_API_KEY           # una vez; pide el valor d
 firebase deploy --only functions,firestore:rules
 ```
 
-`TMDB_API_KEY` se consume vía `firebase-functions/params` (`defineSecret`): en local usa `.env` (ver arriba), en producción usa este secreto de Secret Manager — nunca hace falta poner el valor real en ningún archivo del repositorio.
+`TMDB_API_KEY` se consume vía `firebase-functions/params` (`defineSecret`): en local usa `.env.local` (ver arriba), en producción usa este secreto de Secret Manager — nunca hace falta poner el valor real en ningún archivo del repositorio.
 
 ## Relación con el resto del proyecto
 
