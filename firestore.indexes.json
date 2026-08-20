@@ -1,4 +1,30 @@
 {
-  "indexes": [],
+  "indexes": [
+    {
+      "collectionGroup": "leaderboard",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "puntuacion", "order": "DESCENDING" },
+        { "fieldPath": "tiempo_total", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "leaderboard",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "userId", "order": "ASCENDING" },
+        { "fieldPath": "puntuacion", "order": "DESCENDING" },
+        { "fieldPath": "tiempo_total", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "leaderboard",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "puntuacion", "order": "ASCENDING" },
+        { "fieldPath": "tiempo_total", "order": "ASCENDING" }
+      ]
+    }
+  ],
   "fieldOverrides": []
 }

@@ -9,3 +9,6 @@ export const BASE_POINTS_PER_CORRECT_ANSWER = 100;
 
 /** Bonus máximo por rapidez (a tiempo_restante = límite de turno completo). */
 export const SPEED_BONUS_MAX_POINTS = 50;
+
+/** Tamaño de página del ranking global (getLeaderboard). */
+export const LEADERBOARD_PAGE_SIZE = 50;
