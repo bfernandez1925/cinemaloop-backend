@@ -58,7 +58,7 @@ describe("submitAnswer", () => {
     ).rejects.toMatchObject({ code: "failed-precondition" });
   });
 
-  it("turno válido: añade turno, actualiza nodo_actual/usados, suma puntos", async () => {
+  it("turno válido: añade turno, actualiza nodo_actual/usados, suma puntos (base + bonus de rapidez)", async () => {
     const gameRef = await createGame();
     mockFetchImplementation((url) => {
       if (url.includes("/search/movie")) {
@@ -89,18 +89,19 @@ describe("submitAnswer", () => {
       ),
     )) as { correcto: boolean; puntos: number; puntuacion_total: number };
 
-    expect(result).toMatchObject({ correcto: true, puntos: 100, puntuacion_total: 100 });
+    // tiempo_restante = 25 - 5 = 20 → bonus = round(50*20/25) = 40 → puntos = 100 + 40 = 140.
+    expect(result).toMatchObject({ correcto: true, puntos: 140, puntuacion_total: 140 });
 
     const gameSnapshot = await gameRef.get();
     expect(gameSnapshot.data()).toMatchObject({
       usados: [7, 100],
-      puntuacion_total: 100,
+      puntuacion_total: 140,
       nodo_actual: { tipo: "pelicula", entidad_tmdb_id: 100, nombre: "Película correcta" },
     });
 
     const turnsSnapshot = await gameRef.collection("turns").get();
     expect(turnsSnapshot.docs).toHaveLength(1);
-    expect(turnsSnapshot.docs[0]?.data()).toMatchObject({ correcta: true, puntos_obtenidos: 100 });
+    expect(turnsSnapshot.docs[0]?.data()).toMatchObject({ correcta: true, puntos_obtenidos: 140 });
   });
 
   it("turno válido (película→actor): busca en /search/person y valida contra /movie/{id}/credits", async () => {
