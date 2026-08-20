@@ -2,7 +2,7 @@ import type { CallableRequest } from "firebase-functions/v2/https";
 import { describe, expect, it } from "vitest";
 import { db } from "../../src/admin";
 import { submitAnswer } from "../../src/functions/gameEngine";
-import { mockFetchImplementation, mockFetchOnce } from "./mocks/externalServices";
+import { mockFetchImplementation } from "./mocks/externalServices";
 
 function callableRequest(data: unknown, uid: string): CallableRequest {
   return { data, auth: { uid } as CallableRequest["auth"] } as CallableRequest;
@@ -145,13 +145,24 @@ describe("fallback y confianza baja (CIN-34)", () => {
 
   it("si Claude falla por completo (red bloqueada, sin mock), el turno tampoco se bloquea", async () => {
     const gameRef = await createGame();
-    // Solo se mockea TMDb; Claude no está mockeado, así que su llamada
-    // choca con el guard de red real de setup.ts y normalizeAnswer la
-    // captura y devuelve null.
-    mockFetchOnce({
-      results: [{ id: 400, title: "Sin IA", popularity: 50, vote_count: 2000, poster_path: null }],
+    // Solo se mockea TMDb; la llamada a Claude no tiene mock específico
+    // para api.anthropic.com, así que choca con el guard de red real de
+    // setup.ts y normalizeAnswer la captura y devuelve null.
+    mockFetchImplementation((url) => {
+      if (url.includes("/search/movie")) {
+        return {
+          body: {
+            results: [
+              { id: 400, title: "Sin IA", popularity: 50, vote_count: 2000, poster_path: null },
+            ],
+          },
+        };
+      }
+      if (url.includes("/person/7/movie_credits")) {
+        return { body: { cast: [{ id: 400 }] } };
+      }
+      throw new Error("Claude no mockeado en este test (comportamiento esperado)");
     });
-    mockFetchOnce({ cast: [{ id: 400 }] });
 
     const result = (await submitAnswer.run(
       callableRequest(

@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { defineSecret } from "firebase-functions/params";
 import { db } from "../admin";
-import { CLAUDE_MAX_TOKENS, CLAUDE_MODEL } from "../config/ai";
+import { CLAUDE_MAX_RETRIES, CLAUDE_MAX_TOKENS, CLAUDE_MODEL } from "../config/ai";
 import { normalizeCorrectionCacheKey } from "../lib/aiCache";
 import { buildNormalizeAnswerPrompt } from "../prompts/normalizeAnswer";
 
@@ -9,7 +9,16 @@ export const ANTHROPIC_API_KEY = defineSecret("ANTHROPIC_API_KEY");
 
 let client: Anthropic | undefined;
 function getClient(): Anthropic {
-  client ??= new Anthropic({ apiKey: ANTHROPIC_API_KEY.value() });
+  // El SDK captura `fetch` en el momento de construir el cliente; como
+  // el cliente se reutiliza entre invocaciones (singleton), se pasa un
+  // indirector que consulta `globalThis.fetch` en cada llamada en vez
+  // de capturarlo una sola vez — si no, los tests que mockean fetch
+  // por caso (vi.stubGlobal) no afectarían a un cliente ya construido.
+  client ??= new Anthropic({
+    apiKey: ANTHROPIC_API_KEY.value(),
+    maxRetries: CLAUDE_MAX_RETRIES,
+    fetch: (...args) => globalThis.fetch(...args),
+  });
   return client;
 }
 

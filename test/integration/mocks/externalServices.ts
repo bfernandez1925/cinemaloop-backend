@@ -8,7 +8,11 @@ import { vi } from "vitest";
  */
 export function mockFetchOnce(body: unknown, init: { status?: number } = {}): void {
   vi.mocked(fetch).mockImplementationOnce(
-    async () => new Response(JSON.stringify(body), { status: init.status ?? 200 }),
+    async () =>
+      new Response(JSON.stringify(body), {
+        status: init.status ?? 200,
+        headers: { "content-type": "application/json" },
+      }),
   );
 }
 
@@ -23,6 +27,9 @@ export function mockFetchImplementation(
 ): void {
   vi.mocked(fetch).mockImplementation(async (input) => {
     const { body, status } = handler(String(input));
-    return new Response(JSON.stringify(body), { status: status ?? 200 });
+    return new Response(JSON.stringify(body), {
+      status: status ?? 200,
+      headers: { "content-type": "application/json" },
+    });
   });
 }
