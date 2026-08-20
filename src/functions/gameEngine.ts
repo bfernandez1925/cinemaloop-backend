@@ -27,6 +27,7 @@ import {
   pickMostPopular,
   summarizeTurns,
   toActorNode,
+  type GameDoc,
   type GameMode,
   type GameNode,
   type PoolEntity,
@@ -158,14 +159,6 @@ export const startGame = onCall({ secrets: [TMDB_API_KEY] }, async (request) => 
 
   return { gameId: gameRef.id, nodoActual };
 });
-
-interface GameDoc {
-  userId: string;
-  estado: "en_curso" | "finalizada";
-  nodo_actual: GameNode;
-  usados: number[];
-  puntuacion_total: number;
-}
 
 function buildNodeFromCandidate(
   tipo: GameNode["tipo"],
