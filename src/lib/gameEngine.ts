@@ -77,6 +77,7 @@ export interface GameDoc {
   tiempo_total?: number;
   tiempo_medio_respuesta?: number;
   enviada_a_ranking?: boolean;
+  agregados_actualizados?: boolean;
 }
 
 export interface TurnRecord {

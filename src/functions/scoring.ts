@@ -2,6 +2,7 @@ import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { db } from "../admin";
 import { LEADERBOARD_PAGE_SIZE } from "../config/scoring";
 import type { GameDoc } from "../lib/gameEngine";
+import { applyGameToAggregates, type UserAggregates } from "../lib/historial";
 
 interface LeaderboardEntry {
   userId: string;
@@ -62,9 +63,48 @@ async function getOwnedFinishedGame(gameId: unknown, uid: string) {
 }
 
 /**
+ * Actualiza los agregados de `users/{uid}` (`mejor_puntuacion`,
+ * `cadena_mas_larga`, `partidas_jugadas`) a partir de una partida
+ * guardada o enviada, una sola vez por partida (idempotente vía el
+ * flag `agregados_actualizados`, dentro de una transacción para
+ * evitar una carrera si dos llamadas llegan a la vez). Nunca se llama
+ * desde `finishGame`, para no contar partidas que luego se descartan.
+ * Ver spec-historial.md.
+ */
+async function applyUserAggregatesOnce(
+  gameRef: FirebaseFirestore.DocumentReference,
+  uid: string,
+  game: GameDoc,
+): Promise<void> {
+  await db.runTransaction(async (transaction) => {
+    const gameSnapshot = await transaction.get(gameRef);
+    if ((gameSnapshot.data() as GameDoc | undefined)?.agregados_actualizados) {
+      return;
+    }
+
+    const userRef = db.collection("users").doc(uid);
+    const userSnapshot = await transaction.get(userRef);
+    const current = userSnapshot.data() as Partial<UserAggregates> | undefined;
+
+    const actualizados = applyGameToAggregates(
+      {
+        mejor_puntuacion: current?.mejor_puntuacion ?? 0,
+        cadena_mas_larga: current?.cadena_mas_larga ?? 0,
+        partidas_jugadas: current?.partidas_jugadas ?? 0,
+      },
+      { puntuacion_total: game.puntuacion_total, nodos_alcanzados: game.nodos_alcanzados ?? 0 },
+    );
+
+    transaction.update(userRef, actualizados);
+    transaction.update(gameRef, { agregados_actualizados: true });
+  });
+}
+
+/**
  * Envía la puntuación de una partida al ranking global: crea
  * `leaderboard/{gameId}` y marca `enviada_a_ranking: true`. La partida
- * permanece también en el historial del usuario.
+ * permanece también en el historial del usuario. Actualiza además los
+ * agregados de usuario (enviar cuenta también como partida jugada).
  * Ver spec-scoring-leaderboard.md.
  */
 export const submitToLeaderboard = onCall(async (request) => {
@@ -92,6 +132,27 @@ export const submitToLeaderboard = onCall(async (request) => {
     });
 
   await gameRef.update({ enviada_a_ranking: true });
+  await applyUserAggregatesOnce(gameRef, request.auth.uid, game);
+
+  return { ok: true };
+});
+
+/**
+ * Confirma "Guardar partida": no hace falta persistir nada de la
+ * partida (ya está completa desde `finishGame`), pero es el único
+ * momento en que el backend sabe que el usuario decidió guardarla en
+ * vez de descartarla — así que es donde se disparan los agregados de
+ * usuario. No existe en la lista canónica de Cloud Functions de
+ * cinemaloop_spec.md porque esa spec no anticipó este hueco; ver
+ * comentario de cierre de CIN-30 para el porqué.
+ */
+export const saveGame = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
+  }
+
+  const { gameRef, game } = await getOwnedFinishedGame(request.data?.gameId, request.auth.uid);
+  await applyUserAggregatesOnce(gameRef, request.auth.uid, game);
 
   return { ok: true };
 });
