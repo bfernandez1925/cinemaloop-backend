@@ -2,7 +2,7 @@ import type { CallableRequest } from "firebase-functions/v2/https";
 import { describe, expect, it } from "vitest";
 import { db } from "../../src/admin";
 import { submitAnswer } from "../../src/functions/gameEngine";
-import { mockFetchImplementation, mockFetchOnce } from "./mocks/externalServices";
+import { mockFetchImplementation } from "./mocks/externalServices";
 
 function callableRequest(data: unknown, uid: string | null): CallableRequest {
   return {
@@ -177,10 +177,19 @@ describe("submitAnswer", () => {
 
   it("entidad repetida: rechaza aunque sea una respuesta real y finaliza la partida", async () => {
     const gameRef = await createGame({ usados: [7, 100] });
-    mockFetchOnce({
-      results: [
-        { id: 100, title: "Ya usada", popularity: 50, vote_count: 2000, poster_path: null },
-      ],
+    mockFetchImplementation((url) => {
+      if (url.includes("/search/movie")) {
+        return {
+          body: {
+            results: [
+              { id: 100, title: "Ya usada", popularity: 50, vote_count: 2000, poster_path: null },
+            ],
+          },
+        };
+      }
+      // Claude falla (sin mock específico) → cae al texto original, que
+      // es justo lo que se está probando aquí de todos modos.
+      throw new Error("Claude no mockeado en este test (comportamiento esperado)");
     });
 
     const result = (await submitAnswer.run(
