@@ -84,6 +84,10 @@ Compila TypeScript a `lib/`, que es lo que Firebase despliega.
 
 Copiar `.env.example` a `.env` y completar con las claves reales de TMDb y Anthropic para desarrollo local. Ninguna clave se expone nunca al cliente ni se commitea al repositorio. Este proyecto no gestiona todavía entornos reales (desarrollo/staging/producción) — esa configuración, y el proyecto de Firebase asociado en `.firebaserc`, se abordarán más adelante.
 
+## Autenticación
+
+Firebase Authentication, solo email/contraseña en el MVP (ver `spec-auth.md`). El proveedor "Email/contraseña" se activa desde la consola de Firebase al configurar un proyecto real — no hay nada que activar en el emulador, que lo soporta siempre. Las reglas de seguridad de Firestore (`firestore.rules`) son deny-all para todas las colecciones, incluida `users/{uid}`: ni un cliente no autenticado ni el propio dueño del documento pueden leer o escribir directamente, solo las Cloud Functions (vía Admin SDK) — ver los tests de `test/integration/firestoreRules.test.ts`.
+
 ## Despliegue
 
 ```bash
