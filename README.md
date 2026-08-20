@@ -68,6 +68,10 @@ npm run test:integration # solo tests de integración (levanta y para el Firebas
 
 Los tests de integración (`test/integration/`) corren contra el Firebase Emulator Suite (Firestore + Auth), que `npm run test:integration` levanta y para automáticamente vía `firebase emulators:exec` — no requiere pasos manuales ni un proyecto de Firebase real (usa el project id especial `demo-cinemaloop`, reconocido por el emulador sin necesidad de credenciales). Cualquier llamada a TMDb o a Claude debe mockearse con `mockFetchOnce` (`test/integration/mocks/externalServices.ts`); una llamada de red real no mockeada falla el test en vez de golpear la red, tanto en local como en CI.
 
+## CI
+
+GitHub Actions (`.github/workflows/ci.yml`) corre lint, typecheck y `npm test` (unit + integración con el Firebase Emulator Suite) en cada push a `main`/`develop` y en cada pull request. Un job en rojo bloquea el merge en `develop` (branch protection). Tiempo de referencia del pipeline: ~35 s (medido en la primera ejecución real, CIN-10).
+
 ## Build
 
 ```bash
