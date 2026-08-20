@@ -11,3 +11,18 @@ export function mockFetchOnce(body: unknown, init: { status?: number } = {}): vo
     async () => new Response(JSON.stringify(body), { status: init.status ?? 200 }),
   );
 }
+
+/**
+ * Mockea todas las llamadas a `fetch` durante el resto del test, con una
+ * respuesta que depende de la URL pedida. Útil cuando el código bajo
+ * test hace varias llamadas distintas (p. ej. paginación) en vez de una
+ * sola, a diferencia de `mockFetchOnce`.
+ */
+export function mockFetchImplementation(
+  handler: (url: string) => { body: unknown; status?: number },
+): void {
+  vi.mocked(fetch).mockImplementation(async (input) => {
+    const { body, status } = handler(String(input));
+    return new Response(JSON.stringify(body), { status: status ?? 200 });
+  });
+}
