@@ -66,15 +66,17 @@ describe("ciclo completo: startGame → submitAnswer (×2) → finishGame", () =
     )) as { gameId: string; nodoActual: { entidad_tmdb_id: number; pais_origen: string | null } };
     expect(nodoInicial).toMatchObject({ entidad_tmdb_id: 1, pais_origen: "Madrid, España" });
 
+    // tiempo_restante = 25-8 = 17 → bonus = round(50*17/25) = 34 → puntos = 134.
     const turno1 = (await submitAnswer.run(
       callableRequest({ gameId, respuesta: "Película A", tiempo_respuesta_segundos: 8 }, uid),
     )) as { correcto: boolean; puntuacion_total: number };
-    expect(turno1).toMatchObject({ correcto: true, puntuacion_total: 100 });
+    expect(turno1).toMatchObject({ correcto: true, puntuacion_total: 134 });
 
+    // tiempo_restante = 25-12 = 13 → bonus = round(50*13/25) = 26 → puntos = 126.
     const turno2 = (await submitAnswer.run(
       callableRequest({ gameId, respuesta: "Actor final", tiempo_respuesta_segundos: 12 }, uid),
     )) as { correcto: boolean; puntuacion_total: number };
-    expect(turno2).toMatchObject({ correcto: true, puntuacion_total: 200 });
+    expect(turno2).toMatchObject({ correcto: true, puntuacion_total: 260 });
 
     const resumen = (await finishGame.run(callableRequest({ gameId }, uid))) as {
       puntuacion_total: number;
@@ -84,7 +86,7 @@ describe("ciclo completo: startGame → submitAnswer (×2) → finishGame", () =
     };
 
     expect(resumen).toEqual({
-      puntuacion_total: 200,
+      puntuacion_total: 260,
       nodos_alcanzados: 2,
       tiempo_total: 20,
       tiempo_medio_respuesta: 10,

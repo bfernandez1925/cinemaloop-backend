@@ -4,5 +4,8 @@
  * lógica, en vez de vivir como números mágicos repartidos por el código.
  */
 
-/** Puntos base por cada respuesta correcta, sin bonus de rapidez todavía (fase 2, CIN-26). */
+/** Puntos base por cada respuesta correcta. */
 export const BASE_POINTS_PER_CORRECT_ANSWER = 100;
+
+/** Bonus máximo por rapidez (a tiempo_restante = límite de turno completo). */
+export const SPEED_BONUS_MAX_POINTS = 50;

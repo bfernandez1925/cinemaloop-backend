@@ -18,8 +18,10 @@ import {
   TMDB_POOL_TARGET_SIZE,
   TMDB_POPULAR_MAX_PAGES,
   TMDB_POPULAR_MOVIE_MIN_VOTE_COUNT,
+  TURN_TIME_LIMIT_SECONDS,
 } from "../config/gameEngine";
 import { BASE_POINTS_PER_CORRECT_ANSWER } from "../config/scoring";
+import { calculateSpeedBonus } from "../lib/scoring";
 import {
   GAME_MODES,
   isAlreadyUsed,
@@ -247,7 +249,9 @@ export const submitAnswer = onCall({ secrets: [TMDB_API_KEY] }, async (request) 
     nuevoNodo = toActorNode(nuevoNodo, detalles);
   }
 
-  const puntos = BASE_POINTS_PER_CORRECT_ANSWER;
+  const tiempoRestante = TURN_TIME_LIMIT_SECONDS - tiempo_respuesta_segundos;
+  const bonus = calculateSpeedBonus(tiempoRestante);
+  const puntos = BASE_POINTS_PER_CORRECT_ANSWER + bonus;
   const puntuacionTotal = game.puntuacion_total + puntos;
 
   const batch = db.batch();
