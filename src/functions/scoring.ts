@@ -1,6 +1,44 @@
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { db } from "../admin";
+import { LEADERBOARD_PAGE_SIZE } from "../config/scoring";
 import type { GameDoc } from "../lib/gameEngine";
+
+interface LeaderboardEntry {
+  userId: string;
+  nombre_usuario: string | null;
+  puntuacion: number;
+  nodos_alcanzados: number;
+  tiempo_medio_respuesta: number;
+  tiempo_total: number;
+  fecha: string;
+}
+
+function leaderboardQuery() {
+  return db.collection("leaderboard").orderBy("puntuacion", "desc").orderBy("tiempo_total", "asc");
+}
+
+async function getOwnRanking(uid: string) {
+  const bestSnapshot = await leaderboardQuery().where("userId", "==", uid).limit(1).get();
+  const bestDoc = bestSnapshot.docs[0];
+  if (!bestDoc) {
+    return null;
+  }
+  const best = bestDoc.data() as LeaderboardEntry;
+
+  const [aboveScore, tiedButFaster] = await Promise.all([
+    db.collection("leaderboard").where("puntuacion", ">", best.puntuacion).count().get(),
+    db
+      .collection("leaderboard")
+      .where("puntuacion", "==", best.puntuacion)
+      .where("tiempo_total", "<", best.tiempo_total)
+      .count()
+      .get(),
+  ]);
+
+  const posicion = aboveScore.data().count + tiedButFaster.data().count + 1;
+
+  return { posicion, ...best };
+}
 
 async function getOwnedFinishedGame(gameId: unknown, uid: string) {
   if (typeof gameId !== "string" || gameId.trim().length === 0) {
@@ -98,5 +136,21 @@ export const getLeaderboard = onCall(async (request) => {
     throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
   }
 
-  throw new HttpsError("unimplemented", "getLeaderboard: pendiente de implementar (CIN-27).");
+  const paginaRaw = request.data?.pagina;
+  const pagina =
+    typeof paginaRaw === "number" && Number.isInteger(paginaRaw) && paginaRaw >= 0 ? paginaRaw : 0;
+
+  const pageSnapshot = await leaderboardQuery()
+    .offset(pagina * LEADERBOARD_PAGE_SIZE)
+    .limit(LEADERBOARD_PAGE_SIZE)
+    .get();
+
+  const entradas = pageSnapshot.docs.map((doc, index) => ({
+    posicion: pagina * LEADERBOARD_PAGE_SIZE + index + 1,
+    ...(doc.data() as LeaderboardEntry),
+  }));
+
+  const propia = await getOwnRanking(request.auth.uid);
+
+  return { pagina, entradas, propia };
 });
