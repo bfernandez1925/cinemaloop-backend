@@ -3,6 +3,7 @@ import { onSchedule } from "firebase-functions/v2/scheduler";
 import { db } from "../admin";
 import {
   TMDB_API_KEY,
+  fetchPersonDetails,
   fetchPopularMovies,
   fetchPopularPeople,
   type TmdbMovieSummary,
@@ -14,7 +15,13 @@ import {
   TMDB_POPULAR_MAX_PAGES,
   TMDB_POPULAR_MOVIE_MIN_VOTE_COUNT,
 } from "../config/gameEngine";
-import type { PoolEntity } from "../lib/gameEngine";
+import {
+  GAME_MODES,
+  type GameMode,
+  type GameNode,
+  type PoolEntity,
+  toActorNode,
+} from "../lib/gameEngine";
 
 function movieToPoolEntity(movie: TmdbMovieSummary): PoolEntity {
   return {
@@ -90,16 +97,57 @@ export const refreshTmdbPool = onSchedule(
   },
 );
 
+function isGameMode(value: unknown): value is GameMode {
+  return typeof value === "string" && (GAME_MODES as string[]).includes(value);
+}
+
 /**
- * Inicia una partida: elige el nodo inicial del pool cacheado y crea el
- * documento de partida. Ver spec-game-engine.md, CIN-17.
+ * Inicia una partida: elige el nodo inicial del pool cacheado (y lo
+ * enriquece con país/año si es actor) y crea el documento de partida.
+ * Ver spec-game-engine.md.
  */
-export const startGame = onCall(async (request) => {
+export const startGame = onCall({ secrets: [TMDB_API_KEY] }, async (request) => {
   if (!request.auth) {
     throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
   }
 
-  throw new HttpsError("unimplemented", "startGame: pendiente de implementar (CIN-17).");
+  const modo = request.data?.modo;
+  if (!isGameMode(modo)) {
+    throw new HttpsError("invalid-argument", `modo debe ser uno de: ${GAME_MODES.join(", ")}.`);
+  }
+
+  const poolSnapshot = await db.collection("tmdbPool").doc("current").get();
+  const entidades = (poolSnapshot.data()?.entidades ?? []) as PoolEntity[];
+  if (entidades.length === 0) {
+    throw new HttpsError(
+      "failed-precondition",
+      "El pool de inicio de partida todavía no se ha generado.",
+    );
+  }
+
+  const elegido = entidades[Math.floor(Math.random() * entidades.length)];
+  if (!elegido) {
+    throw new HttpsError("internal", "No se pudo elegir un nodo inicial del pool.");
+  }
+
+  let nodoActual: GameNode = elegido;
+  if (elegido.tipo === "actor") {
+    const detalles = await fetchPersonDetails(elegido.entidad_tmdb_id);
+    nodoActual = toActorNode(elegido, detalles);
+  }
+
+  const gameRef = db.collection("games").doc();
+  await gameRef.set({
+    userId: request.auth.uid,
+    modo,
+    estado: "en_curso",
+    fecha: new Date().toISOString(),
+    nodo_actual: nodoActual,
+    usados: [nodoActual.entidad_tmdb_id],
+    puntuacion_total: 0,
+  });
+
+  return { gameId: gameRef.id, nodoActual };
 });
 
 /**
