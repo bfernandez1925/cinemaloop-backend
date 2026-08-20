@@ -103,6 +103,39 @@ describe("submitAnswer", () => {
     expect(turnsSnapshot.docs[0]?.data()).toMatchObject({ correcta: true, puntos_obtenidos: 100 });
   });
 
+  it("turno válido (película→actor): busca en /search/person y valida contra /movie/{id}/credits", async () => {
+    const gameRef = await createGame({
+      nodo_actual: { tipo: "pelicula", entidad_tmdb_id: 55, nombre: "Una película", imagen: null },
+      usados: [55],
+    });
+    mockFetchImplementation((url) => {
+      if (url.includes("/search/person")) {
+        return {
+          body: {
+            results: [{ id: 900, name: "Actor correcto", popularity: 50, profile_path: null }],
+          },
+        };
+      }
+      if (url.includes("/movie/55/credits")) {
+        return { body: { cast: [{ id: 900 }] } };
+      }
+      if (url.includes("/person/900")) {
+        return { body: { id: 900, name: "Actor correcto", place_of_birth: null, birthday: null } };
+      }
+      throw new Error(`URL no esperada: ${url}`);
+    });
+
+    const result = (await submitAnswer.run(
+      callableRequest(
+        { gameId: gameRef.id, respuesta: "Actor correcto", tiempo_respuesta_segundos: 5 },
+        "user-1",
+      ),
+    )) as { correcto: boolean; nodoActual: { tipo: string; entidad_tmdb_id: number } };
+
+    expect(result.correcto).toBe(true);
+    expect(result.nodoActual).toMatchObject({ tipo: "actor", entidad_tmdb_id: 900 });
+  });
+
   it("turno inválido (sin relación real con el nodo actual): finaliza la partida conservando la puntuación", async () => {
     const gameRef = await createGame({ puntuacion_total: 300 });
     mockFetchImplementation((url) => {
