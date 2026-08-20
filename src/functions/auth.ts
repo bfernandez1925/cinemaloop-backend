@@ -1,24 +1,29 @@
 import * as functionsV1 from "firebase-functions/v1";
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { db } from "../admin";
+import { FUNCTIONS_REGION } from "../config/firebase";
 
 /**
  * Trigger de Firebase Authentication: crea el documento de perfil del
  * usuario al registrarse. El cliente nunca escribe directamente en
  * `users/{uid}` (ver spec-auth.md, reglas deny-all en firestore.rules).
+ * `setGlobalOptions` (v2) no aplica a triggers v1 — región explícita.
  */
-export const onUserCreated = functionsV1.auth.user().onCreate(async (user) => {
-  await db
-    .collection("users")
-    .doc(user.uid)
-    .set({
-      nombre_usuario: user.displayName ?? null,
-      fecha_registro: new Date().toISOString(),
-      mejor_puntuacion: 0,
-      cadena_mas_larga: 0,
-      partidas_jugadas: 0,
-    });
-});
+export const onUserCreated = functionsV1
+  .region(FUNCTIONS_REGION)
+  .auth.user()
+  .onCreate(async (user) => {
+    await db
+      .collection("users")
+      .doc(user.uid)
+      .set({
+        nombre_usuario: user.displayName ?? null,
+        fecha_registro: new Date().toISOString(),
+        mejor_puntuacion: 0,
+        cadena_mas_larga: 0,
+        partidas_jugadas: 0,
+      });
+  });
 
 /**
  * Actualiza el nombre de usuario del perfil autenticado. Solo opera
