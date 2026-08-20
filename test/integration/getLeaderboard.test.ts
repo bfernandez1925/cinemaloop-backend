@@ -102,4 +102,26 @@ describe("getLeaderboard", () => {
     };
     expect(result.propia).toBeNull();
   });
+
+  it("una partida finalizada pero nunca enviada al ranking (enviada_a_ranking: false) no aparece nunca (CIN-28)", async () => {
+    const uid = randomUUID();
+    // Partida finalizada con la puntuación más alta posible, pero jamás
+    // se llamó a submitToLeaderboard: no debe existir ningún documento
+    // en leaderboard/, así que no puede aparecer ni afectar a `propia`.
+    await db.collection("games").doc().set({
+      userId: uid,
+      estado: "finalizada",
+      enviada_a_ranking: false,
+      puntuacion_total: 999999,
+    });
+    await seedEntry({ puntuacion: 100 });
+
+    const result = (await getLeaderboard.run(callableRequest({}, uid))) as {
+      entradas: Array<{ userId: string }>;
+      propia: unknown;
+    };
+
+    expect(result.entradas.some((entrada) => entrada.userId === uid)).toBe(false);
+    expect(result.propia).toBeNull();
+  });
 });
