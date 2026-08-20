@@ -4,7 +4,7 @@
   "private": true,
   "description": "Cinemaloop Cloud Functions: motor de juego, puntuación, historial y autenticación.",
   "engines": {
-    "node": ">=20"
+    "node": "22"
   },
   "main": "lib/index.js",
   "scripts": {
