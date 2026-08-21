@@ -29,3 +29,18 @@ export const TMDB_POPULAR_MOVIE_MIN_VOTE_COUNT = 1000;
 
 /** Tope de páginas a pedir a cada endpoint /popular al construir el pool. */
 export const TMDB_POPULAR_MAX_PAGES = 50;
+
+/**
+ * Umbral de ambigüedad entre candidatos válidos (CIN-23): dos candidatos
+ * se consideran "igual de probables" si el segundo tiene al menos este
+ * porcentaje de la popularidad del primero. No especificado en la spec
+ * ("diferencia de popularidad insignificante" sin un número — ver
+ * spec-game-engine.md); se fija en 0.85 como valor razonable de
+ * ingeniería: separa casos claros (un candidato domina claramente) de
+ * casos genuinamente dudosos, sin disparar el diálogo de confirmación
+ * en cada turno.
+ */
+export const AMBIGUITY_POPULARITY_RATIO = 0.85;
+
+/** Tope de candidatos ambiguos mostrados al jugador (spec-game-engine.md: "2-3 candidatos"). */
+export const MAX_AMBIGUOUS_CANDIDATES = 3;

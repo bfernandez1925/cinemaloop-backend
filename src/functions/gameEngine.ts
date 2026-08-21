@@ -5,6 +5,7 @@ import { ANTHROPIC_API_KEY, normalizeAnswer } from "../clients/claude";
 import {
   TMDB_API_KEY,
   fetchMovieCredits,
+  fetchMovieDetails,
   fetchPersonDetails,
   fetchPersonMovieCredits,
   fetchPopularMovies,
@@ -15,8 +16,10 @@ import {
   type TmdbPersonSummary,
 } from "../clients/tmdb";
 import {
+  AMBIGUITY_POPULARITY_RATIO,
   CONTRARRELOJ_TOTAL_TIME_LIMIT_SECONDS,
   MARATHON_INACTIVITY_TIMEOUT_SECONDS,
+  MAX_AMBIGUOUS_CANDIDATES,
   TMDB_POOL_MOVIE_SHARE,
   TMDB_POOL_TARGET_SIZE,
   TMDB_POPULAR_MAX_PAGES,
@@ -27,6 +30,7 @@ import { BASE_POINTS_PER_CORRECT_ANSWER } from "../config/scoring";
 import { calculateSpeedBonus } from "../lib/scoring";
 import {
   GAME_MODES,
+  findAmbiguousCandidates,
   hasExceededInactivityTimeout,
   isAlreadyUsed,
   isInCast,
@@ -195,6 +199,13 @@ function buildNodeFromCandidate(
  * busca el candidato de mayor `popularity`, comprueba que tenga
  * relación real con el nodo actual (filmografía/reparto) y que no esté
  * repetido. Ver spec-game-engine.md.
+ *
+ * Ambigüedad (CIN-23): si hay ≥2 candidatos válidos (en el reparto/
+ * filmografía correcto, sin repetir) con popularidad similar, el turno
+ * NO se resuelve ni se cuenta como fallo — se devuelven los candidatos
+ * para que el jugador elija, y una segunda llamada con `candidato_id`
+ * confirma cuál es. `candidato_id` se revalida igual que un candidato
+ * normal (reparto/repetición), nunca se confía en él a ciegas.
  */
 export const submitAnswer = onCall(
   { secrets: [TMDB_API_KEY, ANTHROPIC_API_KEY] },
@@ -203,7 +214,7 @@ export const submitAnswer = onCall(
       throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
     }
 
-    const { gameId, respuesta, tiempo_respuesta_segundos } = request.data ?? {};
+    const { gameId, respuesta, tiempo_respuesta_segundos, candidato_id } = request.data ?? {};
     if (typeof gameId !== "string" || gameId.trim().length === 0) {
       throw new HttpsError("invalid-argument", "gameId es obligatorio.");
     }
@@ -215,6 +226,9 @@ export const submitAnswer = onCall(
         "invalid-argument",
         "tiempo_respuesta_segundos debe ser un número >= 0.",
       );
+    }
+    if (candidato_id !== undefined && typeof candidato_id !== "number") {
+      throw new HttpsError("invalid-argument", "candidato_id debe ser un número.");
     }
 
     const gameRef = db.collection("games").doc(gameId);
@@ -254,34 +268,75 @@ export const submitAnswer = onCall(
     // de su filmografía, y viceversa.
     const tipoEsperado: GameNode["tipo"] = game.nodo_actual.tipo === "actor" ? "pelicula" : "actor";
 
-    // La IA normaliza el texto libre a nombres canónicos
-    // (spec-ai-interpretation.md); si falla o no devuelve nada
-    // razonable, se usa el texto original tal cual como único
-    // "candidato" (CIN-34) — el turno nunca se bloquea por un fallo de
-    // la IA. Con varios candidatos, se prueban en orden contra TMDb y se
-    // usa el primero que encaje con las reglas del turno.
-    const normalizado = await normalizeAnswer(respuesta);
-    const textosCandidatos =
-      normalizado && normalizado.candidatos.length > 0 ? normalizado.candidatos : [respuesta];
-
     let candidato: TmdbMovieSummary | TmdbPersonSummary | null = null;
     let correcto = false;
-    for (const texto of textosCandidatos) {
-      const resultados: Array<TmdbMovieSummary | TmdbPersonSummary> =
-        tipoEsperado === "pelicula"
-          ? (await searchMovies(texto)).results
-          : (await searchPeople(texto)).results;
-      const mejorCandidato = pickMostPopular(resultados);
-      if (!mejorCandidato || isAlreadyUsed(game.usados, mejorCandidato.id)) {
-        continue;
-      }
+
+    if (typeof candidato_id === "number") {
+      // El jugador ya eligió entre los candidatos ambiguos de una
+      // llamada anterior — se revalida igual que un candidato normal,
+      // nunca se confía en el id a ciegas.
       const cast =
         tipoEsperado === "pelicula"
           ? (await fetchPersonMovieCredits(game.nodo_actual.entidad_tmdb_id)).cast
           : (await fetchMovieCredits(game.nodo_actual.entidad_tmdb_id)).cast;
-      if (isInCast(cast, mejorCandidato.id)) {
-        candidato = mejorCandidato;
+      if (isInCast(cast, candidato_id) && !isAlreadyUsed(game.usados, candidato_id)) {
+        candidato =
+          tipoEsperado === "pelicula"
+            ? await fetchMovieDetails(candidato_id)
+            : await fetchPersonDetails(candidato_id);
         correcto = true;
+      }
+    } else {
+      // La IA normaliza el texto libre a nombres canónicos
+      // (spec-ai-interpretation.md); si falla o no devuelve nada
+      // razonable, se usa el texto original tal cual como único
+      // "candidato" (CIN-34) — el turno nunca se bloquea por un fallo de
+      // la IA. Con varios candidatos, se prueban en orden contra TMDb y
+      // se usa el primero que encaje con las reglas del turno.
+      const normalizado = await normalizeAnswer(respuesta);
+      const textosCandidatos =
+        normalizado && normalizado.candidatos.length > 0 ? normalizado.candidatos : [respuesta];
+
+      for (const texto of textosCandidatos) {
+        const resultados: Array<TmdbMovieSummary | TmdbPersonSummary> =
+          tipoEsperado === "pelicula"
+            ? (await searchMovies(texto)).results
+            : (await searchPeople(texto)).results;
+        // Filtrar por no-repetido antes de pedir el reparto/filmografía
+        // (llamada de red) evita esa llamada cuando de entrada ningún
+        // resultado podría ser válido.
+        const noUsados = resultados.filter(
+          (resultado) => !isAlreadyUsed(game.usados, resultado.id),
+        );
+        if (noUsados.length === 0) {
+          continue;
+        }
+        const cast =
+          tipoEsperado === "pelicula"
+            ? (await fetchPersonMovieCredits(game.nodo_actual.entidad_tmdb_id)).cast
+            : (await fetchMovieCredits(game.nodo_actual.entidad_tmdb_id)).cast;
+        const candidatosValidos = noUsados.filter((resultado) => isInCast(cast, resultado.id));
+        if (candidatosValidos.length === 0) {
+          continue;
+        }
+
+        // Ambigüedad real (CIN-23): ≥2 candidatos ya validados con
+        // popularidad similar — se pregunta al jugador en vez de elegir
+        // el más popular en silencio.
+        const ambiguos = findAmbiguousCandidates(
+          candidatosValidos,
+          AMBIGUITY_POPULARITY_RATIO,
+          MAX_AMBIGUOUS_CANDIDATES,
+        );
+        if (ambiguos.length >= 2) {
+          return {
+            ambiguo: true as const,
+            candidatos: ambiguos.map((c) => buildNodeFromCandidate(tipoEsperado, c)),
+          };
+        }
+
+        candidato = pickMostPopular(candidatosValidos);
+        correcto = candidato !== null;
         break;
       }
     }
