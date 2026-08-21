@@ -104,6 +104,41 @@ describe("submitAnswer", () => {
     expect(turnsSnapshot.docs[0]?.data()).toMatchObject({ correcta: true, puntos_obtenidos: 140 });
   });
 
+  it("modo infantil aplica el mismo bonus de rapidez que Clásico (CIN-54)", async () => {
+    const gameRef = await createGame({ modo: "infantil" });
+    mockFetchImplementation((url) => {
+      if (url.includes("/search/movie")) {
+        return {
+          body: {
+            results: [
+              {
+                id: 100,
+                title: "Película correcta",
+                popularity: 50,
+                vote_count: 2000,
+                poster_path: null,
+              },
+            ],
+          },
+        };
+      }
+      if (url.includes("/person/7/movie_credits")) {
+        return { body: { cast: [{ id: 100 }] } };
+      }
+      throw new Error(`URL no esperada: ${url}`);
+    });
+
+    const result = (await submitAnswer.run(
+      callableRequest(
+        { gameId: gameRef.id, respuesta: "Película correcta", tiempo_respuesta_segundos: 5 },
+        "user-1",
+      ),
+    )) as { correcto: boolean; puntos: number };
+
+    // Mismo cálculo que Clásico: tiempo_restante = 20 → bonus = 40 → puntos = 140.
+    expect(result).toMatchObject({ correcto: true, puntos: 140 });
+  });
+
   it("turno válido (película→actor): busca en /search/person y valida contra /movie/{id}/credits", async () => {
     const gameRef = await createGame({
       nodo_actual: { tipo: "pelicula", entidad_tmdb_id: 55, nombre: "Una película", imagen: null },

@@ -84,4 +84,36 @@ describe("startGame", () => {
       startGame.run(callableRequest({ modo: "clasico" }, "user-1")),
     ).rejects.toMatchObject({ code: "failed-precondition" });
   });
+
+  it("modo infantil lee de tmdbPool/infantil, no del pool general (CIN-54)", async () => {
+    await seedPool([
+      { tipo: "pelicula", entidad_tmdb_id: 1, nombre: "Del pool general", imagen: null },
+    ]);
+    await db
+      .collection("tmdbPool")
+      .doc("infantil")
+      .set({
+        entidades: [
+          { tipo: "pelicula", entidad_tmdb_id: 2, nombre: "Del pool infantil", imagen: null },
+        ],
+        actualizado_en: new Date().toISOString(),
+      });
+
+    const result = (await startGame.run(callableRequest({ modo: "infantil" }, "user-1"))) as {
+      nodoActual: { nombre: string };
+    };
+
+    expect(result.nodoActual.nombre).toBe("Del pool infantil");
+  });
+
+  it("modo infantil rechaza si su propio pool todavía no se ha generado, aunque el general exista", async () => {
+    await seedPool([
+      { tipo: "pelicula", entidad_tmdb_id: 1, nombre: "Del pool general", imagen: null },
+    ]);
+    await db.collection("tmdbPool").doc("infantil").delete();
+
+    await expect(
+      startGame.run(callableRequest({ modo: "infantil" }, "user-1")),
+    ).rejects.toMatchObject({ code: "failed-precondition" });
+  });
 });
