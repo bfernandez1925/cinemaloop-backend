@@ -1,11 +1,12 @@
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { db } from "../admin";
 import { LEADERBOARD_PAGE_SIZE } from "../config/scoring";
-import type { GameDoc } from "../lib/gameEngine";
+import { GAME_MODES, type GameDoc, type GameMode } from "../lib/gameEngine";
 import { applyGameToAggregates, type UserAggregates } from "../lib/historial";
 
 interface LeaderboardEntry {
   userId: string;
+  modo: GameMode;
   nombre_usuario: string | null;
   puntuacion: number;
   nodos_alcanzados: number;
@@ -14,12 +15,33 @@ interface LeaderboardEntry {
   fecha: string;
 }
 
-function leaderboardQuery() {
-  return db.collection("leaderboard").orderBy("puntuacion", "desc").orderBy("tiempo_total", "asc");
+/**
+ * Cada modo premia algo distinto (Clásico/Infantil: rapidez con cadena
+ * ilimitada; Contrarreloj: presupuesto fijo de 90s; Maratón: sin
+ * límite de tiempo) — mezclar sus puntuaciones en un único ranking no
+ * tendría sentido, así que el ranking siempre se consulta filtrado
+ * por `modo` (CIN-63).
+ */
+function parseGameMode(value: unknown): GameMode {
+  if (typeof value !== "string" || !GAME_MODES.includes(value as GameMode)) {
+    throw new HttpsError(
+      "invalid-argument",
+      "modo es obligatorio y debe ser un modo de juego válido.",
+    );
+  }
+  return value as GameMode;
 }
 
-async function getOwnRanking(uid: string) {
-  const bestSnapshot = await leaderboardQuery().where("userId", "==", uid).limit(1).get();
+function leaderboardQuery(modo: GameMode) {
+  return db
+    .collection("leaderboard")
+    .where("modo", "==", modo)
+    .orderBy("puntuacion", "desc")
+    .orderBy("tiempo_total", "asc");
+}
+
+async function getOwnRanking(uid: string, modo: GameMode) {
+  const bestSnapshot = await leaderboardQuery(modo).where("userId", "==", uid).limit(1).get();
   const bestDoc = bestSnapshot.docs[0];
   if (!bestDoc) {
     return null;
@@ -27,9 +49,15 @@ async function getOwnRanking(uid: string) {
   const best = bestDoc.data() as LeaderboardEntry;
 
   const [aboveScore, tiedButFaster] = await Promise.all([
-    db.collection("leaderboard").where("puntuacion", ">", best.puntuacion).count().get(),
     db
       .collection("leaderboard")
+      .where("modo", "==", modo)
+      .where("puntuacion", ">", best.puntuacion)
+      .count()
+      .get(),
+    db
+      .collection("leaderboard")
+      .where("modo", "==", modo)
       .where("puntuacion", "==", best.puntuacion)
       .where("tiempo_total", "<", best.tiempo_total)
       .count()
@@ -123,6 +151,7 @@ export const submitToLeaderboard = onCall(async (request) => {
     .doc(gameId)
     .set({
       userId: request.auth.uid,
+      modo: game.modo,
       nombre_usuario: nombreUsuario,
       puntuacion: game.puntuacion_total,
       nodos_alcanzados: game.nodos_alcanzados ?? 0,
@@ -188,8 +217,10 @@ export const discardGame = onCall(async (request) => {
 });
 
 /**
- * Devuelve el ranking global paginado, con la posición del usuario
- * autenticado aunque no esté en la página solicitada.
+ * Devuelve el ranking global paginado de un modo concreto, con la
+ * posición del usuario autenticado en ese modo aunque no esté en la
+ * página solicitada. `modo` es obligatorio (CIN-63): no existe un
+ * ranking "de todos los modos mezclados".
  * Ver spec-scoring-leaderboard.md, CIN-27.
  */
 export const getLeaderboard = onCall(async (request) => {
@@ -197,11 +228,13 @@ export const getLeaderboard = onCall(async (request) => {
     throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
   }
 
+  const modo = parseGameMode(request.data?.modo);
+
   const paginaRaw = request.data?.pagina;
   const pagina =
     typeof paginaRaw === "number" && Number.isInteger(paginaRaw) && paginaRaw >= 0 ? paginaRaw : 0;
 
-  const pageSnapshot = await leaderboardQuery()
+  const pageSnapshot = await leaderboardQuery(modo)
     .offset(pagina * LEADERBOARD_PAGE_SIZE)
     .limit(LEADERBOARD_PAGE_SIZE)
     .get();
@@ -211,7 +244,7 @@ export const getLeaderboard = onCall(async (request) => {
     ...(doc.data() as LeaderboardEntry),
   }));
 
-  const propia = await getOwnRanking(request.auth.uid);
+  const propia = await getOwnRanking(request.auth.uid, modo);
 
   return { pagina, entradas, propia };
 });
