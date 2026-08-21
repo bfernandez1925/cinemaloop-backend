@@ -4,6 +4,7 @@
       "collectionGroup": "leaderboard",
       "queryScope": "COLLECTION",
       "fields": [
+        { "fieldPath": "modo", "order": "ASCENDING" },
         { "fieldPath": "puntuacion", "order": "DESCENDING" },
         { "fieldPath": "tiempo_total", "order": "ASCENDING" }
       ]
@@ -12,6 +13,7 @@
       "collectionGroup": "leaderboard",
       "queryScope": "COLLECTION",
       "fields": [
+        { "fieldPath": "modo", "order": "ASCENDING" },
         { "fieldPath": "userId", "order": "ASCENDING" },
         { "fieldPath": "puntuacion", "order": "DESCENDING" },
         { "fieldPath": "tiempo_total", "order": "ASCENDING" }
@@ -21,6 +23,7 @@
       "collectionGroup": "leaderboard",
       "queryScope": "COLLECTION",
       "fields": [
+        { "fieldPath": "modo", "order": "ASCENDING" },
         { "fieldPath": "puntuacion", "order": "ASCENDING" },
         { "fieldPath": "tiempo_total", "order": "ASCENDING" }
       ]
