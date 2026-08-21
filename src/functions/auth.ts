@@ -8,21 +8,31 @@ import { FUNCTIONS_REGION } from "../config/firebase";
  * usuario al registrarse. El cliente nunca escribe directamente en
  * `users/{uid}` (ver spec-auth.md, reglas deny-all en firestore.rules).
  * `setGlobalOptions` (v2) no aplica a triggers v1 — región explícita.
+ *
+ * `user.displayName` casi nunca está disponible todavía en este punto:
+ * el cliente crea la cuenta y llama a `updateProfile` (Auth) y a
+ * `updateUsername` (este mismo archivo) como pasos posteriores, y este
+ * trigger puede ejecutarse antes, después o en medio de esos dos. Por
+ * eso se usa una transacción que preserva un `nombre_usuario` que
+ * `updateUsername` ya haya escrito, en vez de sobrescribirlo siempre
+ * con el `displayName` (casi siempre nulo) del momento de creación.
  */
 export const onUserCreated = functionsV1
   .region(FUNCTIONS_REGION)
   .auth.user()
   .onCreate(async (user) => {
-    await db
-      .collection("users")
-      .doc(user.uid)
-      .set({
-        nombre_usuario: user.displayName ?? null,
-        fecha_registro: new Date().toISOString(),
-        mejor_puntuacion: 0,
-        cadena_mas_larga: 0,
-        partidas_jugadas: 0,
+    const userRef = db.collection("users").doc(user.uid);
+    await db.runTransaction(async (transaction) => {
+      const snapshot = await transaction.get(userRef);
+      const existing = snapshot.data();
+      transaction.set(userRef, {
+        nombre_usuario: existing?.nombre_usuario ?? user.displayName ?? null,
+        fecha_registro: existing?.fecha_registro ?? new Date().toISOString(),
+        mejor_puntuacion: existing?.mejor_puntuacion ?? 0,
+        cadena_mas_larga: existing?.cadena_mas_larga ?? 0,
+        partidas_jugadas: existing?.partidas_jugadas ?? 0,
       });
+    });
   });
 
 /**
@@ -55,6 +65,11 @@ export const getUserProfile = onCall(async (request) => {
  * sobre `request.auth.uid`: no existe ningún parámetro de uid que el
  * cliente pueda manipular, así que no hay ninguna forma de modificar el
  * documento de otro usuario. Ver spec-auth.md.
+ *
+ * `set(..., {merge: true})` en vez de `update()`: el cliente llama a
+ * esta función justo después de crear la cuenta (ver AuthModal), y
+ * `onUserCreated` puede no haber creado todavía `users/{uid}` en ese
+ * momento — `update()` fallaría con `not-found` en esa carrera.
  */
 export const updateUsername = onCall(async (request) => {
   if (!request.auth) {
@@ -69,5 +84,5 @@ export const updateUsername = onCall(async (request) => {
   await db
     .collection("users")
     .doc(request.auth.uid)
-    .update({ nombre_usuario: nombreUsuario.trim() });
+    .set({ nombre_usuario: nombreUsuario.trim() }, { merge: true });
 });

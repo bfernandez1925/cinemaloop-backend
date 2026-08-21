@@ -33,4 +33,14 @@ describe("updateUsername", () => {
     const snapshot = await db.collection("users").doc(uid).get();
     expect(snapshot.data()?.nombre_usuario).toBe("Nombre actualizado");
   });
+
+  it("funciona aunque users/{uid} no exista todavía (carrera con onUserCreated, CIN-64)", async () => {
+    const uid = randomUUID();
+
+    await updateUsername.run(callableRequest({ nombre_usuario: "Recién creado" }, uid));
+
+    const snapshot = await db.collection("users").doc(uid).get();
+    expect(snapshot.exists).toBe(true);
+    expect(snapshot.data()?.nombre_usuario).toBe("Recién creado");
+  });
 });

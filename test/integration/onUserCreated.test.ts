@@ -37,4 +37,22 @@ describe("onUserCreated", () => {
     const snapshot = await db.collection("users").doc(uid).get();
     expect(snapshot.data()?.nombre_usuario).toBeNull();
   });
+
+  it("no sobrescribe un nombre_usuario que updateUsername ya haya escrito antes de que el trigger corra (CIN-64)", async () => {
+    const uid = randomUUID();
+    // Simula la carrera real: el cliente llama a updateUsername justo
+    // después de crear la cuenta, y este trigger todavía no ha corrido
+    // (displayName tampoco está disponible en el evento, como en real).
+    await db.collection("users").doc(uid).set({ nombre_usuario: "Elegido por el cliente" });
+
+    await onUserCreated.run({ uid } as unknown as Parameters<typeof onUserCreated.run>[0], {});
+
+    const snapshot = await db.collection("users").doc(uid).get();
+    expect(snapshot.data()).toMatchObject({
+      nombre_usuario: "Elegido por el cliente",
+      mejor_puntuacion: 0,
+      cadena_mas_larga: 0,
+      partidas_jugadas: 0,
+    });
+  });
 });
