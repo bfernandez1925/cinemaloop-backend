@@ -4,10 +4,6 @@ import { db } from "../admin";
 import { ANTHROPIC_API_KEY, normalizeAnswer } from "../clients/claude";
 import {
   TMDB_API_KEY,
-  fetchMovieCredits,
-  fetchMovieDetails,
-  fetchPersonDetails,
-  fetchPersonMovieCredits,
   fetchPopularMovies,
   fetchPopularPeople,
   searchMovies,
@@ -16,10 +12,17 @@ import {
   type TmdbPersonSummary,
 } from "../clients/tmdb";
 import {
+  getMovieCreditsCached,
+  getMovieDetailsCached,
+  getPersonDetailsCached,
+  getPersonMovieCreditsCached,
+} from "../clients/tmdbCache";
+import {
   AMBIGUITY_POPULARITY_RATIO,
   CONTRARRELOJ_TOTAL_TIME_LIMIT_SECONDS,
   MARATHON_INACTIVITY_TIMEOUT_SECONDS,
   MAX_AMBIGUOUS_CANDIDATES,
+  PERSON_CREDITS_CACHE_TTL_SECONDS,
   TMDB_POOL_MOVIE_SHARE,
   TMDB_POOL_TARGET_SIZE,
   TMDB_POPULAR_MAX_PAGES,
@@ -152,7 +155,7 @@ export const startGame = onCall({ secrets: [TMDB_API_KEY] }, async (request) => 
 
   let nodoActual: GameNode = elegido;
   if (elegido.tipo === "actor") {
-    const detalles = await fetchPersonDetails(elegido.entidad_tmdb_id);
+    const detalles = await getPersonDetailsCached(elegido.entidad_tmdb_id);
     nodoActual = toActorNode(elegido, detalles);
   }
 
@@ -277,13 +280,19 @@ export const submitAnswer = onCall(
       // nunca se confía en el id a ciegas.
       const cast =
         tipoEsperado === "pelicula"
-          ? (await fetchPersonMovieCredits(game.nodo_actual.entidad_tmdb_id)).cast
-          : (await fetchMovieCredits(game.nodo_actual.entidad_tmdb_id)).cast;
+          ? (
+              await getPersonMovieCreditsCached(
+                game.nodo_actual.entidad_tmdb_id,
+                PERSON_CREDITS_CACHE_TTL_SECONDS,
+                ahoraIso,
+              )
+            ).cast
+          : (await getMovieCreditsCached(game.nodo_actual.entidad_tmdb_id)).cast;
       if (isInCast(cast, candidato_id) && !isAlreadyUsed(game.usados, candidato_id)) {
         candidato =
           tipoEsperado === "pelicula"
-            ? await fetchMovieDetails(candidato_id)
-            : await fetchPersonDetails(candidato_id);
+            ? await getMovieDetailsCached(candidato_id)
+            : await getPersonDetailsCached(candidato_id);
         correcto = true;
       }
     } else {
@@ -313,8 +322,14 @@ export const submitAnswer = onCall(
         }
         const cast =
           tipoEsperado === "pelicula"
-            ? (await fetchPersonMovieCredits(game.nodo_actual.entidad_tmdb_id)).cast
-            : (await fetchMovieCredits(game.nodo_actual.entidad_tmdb_id)).cast;
+            ? (
+                await getPersonMovieCreditsCached(
+                  game.nodo_actual.entidad_tmdb_id,
+                  PERSON_CREDITS_CACHE_TTL_SECONDS,
+                  ahoraIso,
+                )
+              ).cast
+            : (await getMovieCreditsCached(game.nodo_actual.entidad_tmdb_id)).cast;
         const candidatosValidos = noUsados.filter((resultado) => isInCast(cast, resultado.id));
         if (candidatosValidos.length === 0) {
           continue;
@@ -348,7 +363,7 @@ export const submitAnswer = onCall(
 
     let nuevoNodo: GameNode = buildNodeFromCandidate(tipoEsperado, candidato);
     if (nuevoNodo.tipo === "actor") {
-      const detalles = await fetchPersonDetails(nuevoNodo.entidad_tmdb_id);
+      const detalles = await getPersonDetailsCached(nuevoNodo.entidad_tmdb_id);
       nuevoNodo = toActorNode(nuevoNodo, detalles);
     }
 
