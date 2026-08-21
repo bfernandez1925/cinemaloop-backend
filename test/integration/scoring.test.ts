@@ -61,6 +61,7 @@ describe("submitToLeaderboard", () => {
     const leaderboardSnapshot = await db.collection("leaderboard").doc(gameRef.id).get();
     expect(leaderboardSnapshot.data()).toMatchObject({
       userId: uid,
+      modo: "clasico",
       nombre_usuario: "Jugador X",
       puntuacion: 300,
       nodos_alcanzados: 3,
@@ -74,6 +75,17 @@ describe("submitToLeaderboard", () => {
     // "Enviar al ranking" también cuenta como partida guardada/jugada (CIN-30).
     const userSnapshot = await db.collection("users").doc(uid).get();
     expect(userSnapshot.data()).toMatchObject({ mejor_puntuacion: 300, partidas_jugadas: 1 });
+  });
+
+  it("guarda el modo de la partida en la entrada del ranking (CIN-63)", async () => {
+    const uid = randomUUID();
+    await db.collection("users").doc(uid).set({ nombre_usuario: "Jugador Y", partidas_jugadas: 0 });
+    const gameRef = await createFinishedGame({ userId: uid, modo: "contrarreloj" });
+
+    await submitToLeaderboard.run(callableRequest({ gameId: gameRef.id }, uid));
+
+    const leaderboardSnapshot = await db.collection("leaderboard").doc(gameRef.id).get();
+    expect(leaderboardSnapshot.data()).toMatchObject({ modo: "contrarreloj" });
   });
 });
 

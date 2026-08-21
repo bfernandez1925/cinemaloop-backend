@@ -26,6 +26,7 @@ async function seedEntry(overrides: Record<string, unknown> = {}) {
     .doc(randomUUID())
     .set({
       userId: randomUUID(),
+      modo: "clasico",
       nombre_usuario: "Jugador",
       puntuacion: 100,
       nodos_alcanzados: 1,
@@ -38,9 +39,20 @@ async function seedEntry(overrides: Record<string, unknown> = {}) {
 
 describe("getLeaderboard", () => {
   it("rechaza peticiones no autenticadas", async () => {
-    await expect(getLeaderboard.run(callableRequest({}, null))).rejects.toMatchObject({
+    await expect(
+      getLeaderboard.run(callableRequest({ modo: "clasico" }, null)),
+    ).rejects.toMatchObject({
       code: "unauthenticated",
     });
+  });
+
+  it("rechaza peticiones sin un modo válido (CIN-63)", async () => {
+    await expect(getLeaderboard.run(callableRequest({}, randomUUID()))).rejects.toMatchObject({
+      code: "invalid-argument",
+    });
+    await expect(
+      getLeaderboard.run(callableRequest({ modo: "no-existe" }, randomUUID())),
+    ).rejects.toMatchObject({ code: "invalid-argument" });
   });
 
   it("ordena por puntuación descendente, con desempate por tiempo_total ascendente", async () => {
@@ -48,7 +60,9 @@ describe("getLeaderboard", () => {
     await seedEntry({ puntuacion: 300, tiempo_total: 20 });
     await seedEntry({ puntuacion: 300, tiempo_total: 10 }); // misma puntuación, más rápido → antes
 
-    const result = (await getLeaderboard.run(callableRequest({}, randomUUID()))) as {
+    const result = (await getLeaderboard.run(
+      callableRequest({ modo: "clasico" }, randomUUID()),
+    )) as {
       entradas: Array<{ puntuacion: number; tiempo_total: number; posicion: number }>;
     };
 
@@ -67,12 +81,16 @@ describe("getLeaderboard", () => {
       await seedEntry({ puntuacion: i });
     }
 
-    const pagina0 = (await getLeaderboard.run(callableRequest({ pagina: 0 }, randomUUID()))) as {
+    const pagina0 = (await getLeaderboard.run(
+      callableRequest({ modo: "clasico", pagina: 0 }, randomUUID()),
+    )) as {
       entradas: unknown[];
     };
     expect(pagina0.entradas).toHaveLength(50);
 
-    const pagina1 = (await getLeaderboard.run(callableRequest({ pagina: 1 }, randomUUID()))) as {
+    const pagina1 = (await getLeaderboard.run(
+      callableRequest({ modo: "clasico", pagina: 1 }, randomUUID()),
+    )) as {
       entradas: Array<{ posicion: number }>;
     };
     expect(pagina1.entradas.length).toBeGreaterThan(0);
@@ -87,7 +105,9 @@ describe("getLeaderboard", () => {
     }
     await seedEntry({ userId: uid, puntuacion: 1, tiempo_total: 5 });
 
-    const result = (await getLeaderboard.run(callableRequest({ pagina: 0 }, uid))) as {
+    const result = (await getLeaderboard.run(
+      callableRequest({ modo: "clasico", pagina: 0 }, uid),
+    )) as {
       entradas: unknown[];
       propia: { posicion: number; puntuacion: number } | null;
     };
@@ -97,7 +117,9 @@ describe("getLeaderboard", () => {
   });
 
   it("devuelve propia: null si el usuario autenticado no tiene ninguna entrada en el ranking", async () => {
-    const result = (await getLeaderboard.run(callableRequest({}, randomUUID()))) as {
+    const result = (await getLeaderboard.run(
+      callableRequest({ modo: "clasico" }, randomUUID()),
+    )) as {
       propia: unknown;
     };
     expect(result.propia).toBeNull();
@@ -116,12 +138,28 @@ describe("getLeaderboard", () => {
     });
     await seedEntry({ puntuacion: 100 });
 
-    const result = (await getLeaderboard.run(callableRequest({}, uid))) as {
+    const result = (await getLeaderboard.run(callableRequest({ modo: "clasico" }, uid))) as {
       entradas: Array<{ userId: string }>;
       propia: unknown;
     };
 
     expect(result.entradas.some((entrada) => entrada.userId === uid)).toBe(false);
     expect(result.propia).toBeNull();
+  });
+
+  it("filtra por modo: una entrada de otro modo no aparece ni afecta a la posición propia (CIN-63)", async () => {
+    const uid = randomUUID();
+    await seedEntry({ modo: "contrarreloj", puntuacion: 999999, tiempo_total: 1 });
+    await seedEntry({ modo: "clasico", puntuacion: 50, tiempo_total: 20 });
+    await seedEntry({ modo: "clasico", userId: uid, puntuacion: 30, tiempo_total: 15 });
+
+    const result = (await getLeaderboard.run(callableRequest({ modo: "clasico" }, uid))) as {
+      entradas: Array<{ modo: string; puntuacion: number }>;
+      propia: { posicion: number; puntuacion: number } | null;
+    };
+
+    expect(result.entradas.every((entrada) => entrada.modo === "clasico")).toBe(true);
+    expect(result.entradas.some((entrada) => entrada.puntuacion === 999999)).toBe(false);
+    expect(result.propia).toMatchObject({ posicion: 2, puntuacion: 30 });
   });
 });
