@@ -57,6 +57,28 @@ export function pickMostPopular<T extends { popularity: number }>(candidates: T[
   return candidates.reduce((best, candidate) => (candidate.popularity > best.popularity ? candidate : best));
 }
 
+/**
+ * Detecta ambigüedad real entre candidatos ya validados (en el reparto/
+ * filmografía correcto, sin repetir) — solo tiene sentido preguntar al
+ * jugador cuando de verdad hay más de una respuesta plausible (CIN-23).
+ * Devuelve los candidatos ambiguos (ordenados de más a menos popular,
+ * como máximo `maxCandidates`), o un array vacío si no hay ambigüedad
+ * real (0 o 1 candidato, o un candidato domina claramente en popularidad).
+ */
+export function findAmbiguousCandidates<T extends { popularity: number }>(
+  validCandidates: T[],
+  popularityRatio: number,
+  maxCandidates: number,
+): T[] {
+  if (validCandidates.length < 2) {
+    return [];
+  }
+  const sorted = [...validCandidates].sort((a, b) => b.popularity - a.popularity);
+  const top = sorted[0]!;
+  const ambiguous = sorted.filter((candidate) => candidate.popularity >= top.popularity * popularityRatio);
+  return ambiguous.length < 2 ? [] : ambiguous.slice(0, maxCandidates);
+}
+
 /** Una entidad no puede aparecer dos veces en la misma partida. */
 export function isAlreadyUsed(usados: number[], tmdbId: number): boolean {
   return usados.includes(tmdbId);

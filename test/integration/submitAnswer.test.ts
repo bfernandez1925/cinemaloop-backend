@@ -243,4 +243,124 @@ describe("submitAnswer", () => {
     expect(result.correcto).toBe(true);
     expect(result.nodoActual).toMatchObject({ entidad_tmdb_id: 301, nombre: "Más popular" });
   });
+
+  it("ambigüedad real (CIN-23): con ≥2 candidatos válidos de popularidad similar, no resuelve el turno", async () => {
+    const gameRef = await createGame();
+    mockFetchImplementation((url) => {
+      if (url.includes("/search/movie")) {
+        return {
+          body: {
+            results: [
+              {
+                id: 400,
+                title: "Candidato A",
+                popularity: 88,
+                vote_count: 2000,
+                poster_path: null,
+              },
+              {
+                id: 401,
+                title: "Candidato B",
+                popularity: 90,
+                vote_count: 2000,
+                poster_path: null,
+              },
+            ],
+          },
+        };
+      }
+      if (url.includes("/person/7/movie_credits")) {
+        // Ambos candidatos están realmente en la filmografía — la
+        // ambigüedad es real, no un filtrado por reparto.
+        return { body: { cast: [{ id: 400 }, { id: 401 }] } };
+      }
+      throw new Error(`URL no esperada: ${url}`);
+    });
+
+    const result = (await submitAnswer.run(
+      callableRequest(
+        { gameId: gameRef.id, respuesta: "Ambigua", tiempo_respuesta_segundos: 5 },
+        "user-1",
+      ),
+    )) as { ambiguo?: boolean; candidatos?: Array<{ entidad_tmdb_id: number; nombre: string }> };
+
+    expect(result.ambiguo).toBe(true);
+    expect(result.candidatos).toEqual([
+      { tipo: "pelicula", entidad_tmdb_id: 401, nombre: "Candidato B", imagen: null },
+      { tipo: "pelicula", entidad_tmdb_id: 400, nombre: "Candidato A", imagen: null },
+    ]);
+
+    // El turno no se resuelve: la partida sigue en_curso, sin nuevo turno ni cambio de puntuación.
+    const gameSnapshot = await gameRef.get();
+    expect(gameSnapshot.data()).toMatchObject({
+      estado: "en_curso",
+      puntuacion_total: 0,
+      usados: [7],
+    });
+    const turnsSnapshot = await gameRef.collection("turns").get();
+    expect(turnsSnapshot.docs).toHaveLength(0);
+  });
+
+  it("confirmación de candidato ambiguo: candidato_id resuelve el turno sin volver a buscar por texto", async () => {
+    const gameRef = await createGame();
+    mockFetchImplementation((url) => {
+      if (url.includes("/person/7/movie_credits")) {
+        return { body: { cast: [{ id: 401 }] } };
+      }
+      if (url.includes("/movie/401")) {
+        return {
+          body: {
+            id: 401,
+            title: "Candidato B",
+            popularity: 90,
+            vote_count: 2000,
+            poster_path: null,
+          },
+        };
+      }
+      throw new Error(`URL no esperada: ${url}`);
+    });
+
+    const result = (await submitAnswer.run(
+      callableRequest(
+        {
+          gameId: gameRef.id,
+          respuesta: "Ambigua",
+          tiempo_respuesta_segundos: 5,
+          candidato_id: 401,
+        },
+        "user-1",
+      ),
+    )) as { correcto: boolean; nodoActual: { entidad_tmdb_id: number; nombre: string } };
+
+    expect(result.correcto).toBe(true);
+    expect(result.nodoActual).toMatchObject({ entidad_tmdb_id: 401, nombre: "Candidato B" });
+
+    const gameSnapshot = await gameRef.get();
+    expect(gameSnapshot.data()).toMatchObject({ usados: [7, 401] });
+  });
+
+  it("confirmación con candidato_id que no está en el reparto: rechaza y finaliza la partida", async () => {
+    const gameRef = await createGame({ puntuacion_total: 50 });
+    mockFetchImplementation((url) => {
+      if (url.includes("/person/7/movie_credits")) {
+        return { body: { cast: [{ id: 999 }] } };
+      }
+      throw new Error(`URL no esperada: ${url}`);
+    });
+
+    const result = (await submitAnswer.run(
+      callableRequest(
+        {
+          gameId: gameRef.id,
+          respuesta: "Ambigua",
+          tiempo_respuesta_segundos: 5,
+          candidato_id: 401,
+        },
+        "user-1",
+      ),
+    )) as { correcto: boolean; puntuacion_total: number };
+
+    expect(result).toEqual({ correcto: false, puntuacion_total: 50 });
+  });
 });

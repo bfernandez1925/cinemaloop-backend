@@ -56,6 +56,13 @@ export function fetchPersonDetails(id: number): Promise<TmdbPersonDetails> {
   return tmdbFetch(`/person/${id}`);
 }
 
+/** Detalles de una película por id — usado al confirmar un candidato
+ * ambiguo (CIN-23), donde ya se conoce el id exacto y no hace falta
+ * buscar por texto. */
+export function fetchMovieDetails(id: number): Promise<TmdbMovieSummary> {
+  return tmdbFetch(`/movie/${id}`);
+}
+
 export function searchMovies(query: string): Promise<{ results: TmdbMovieSummary[] }> {
   return tmdbFetch("/search/movie", { query });
 }
