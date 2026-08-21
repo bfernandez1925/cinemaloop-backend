@@ -379,9 +379,19 @@ export const submitAnswer = onCall(
       // "candidato" (CIN-34) — el turno nunca se bloquea por un fallo de
       // la IA. Con varios candidatos, se prueban en orden contra TMDb y
       // se usa el primero que encaje con las reglas del turno.
+      //
+      // El texto original se añade SIEMPRE al final, incluso cuando
+      // Claude sí devuelve candidatos (CIN-69): la IA normaliza sin
+      // contexto del turno (no sabe qué reparto/filmografía se espera),
+      // así que puede "corregir" con confianza hacia una entidad real
+      // pero distinta de la esperada — isInCast la rechaza, y sin este
+      // fallback el turno se perdía aunque el texto tal cual (con el
+      // fuzzy matching propio de TMDb) sí habría encontrado la correcta.
       const normalizado = await normalizeAnswer(respuesta);
       const textosCandidatos =
-        normalizado && normalizado.candidatos.length > 0 ? normalizado.candidatos : [respuesta];
+        normalizado && normalizado.candidatos.length > 0
+          ? [...new Set([...normalizado.candidatos, respuesta])]
+          : [respuesta];
 
       for (const texto of textosCandidatos) {
         const resultados: Array<TmdbMovieSummary | TmdbPersonSummary> =
