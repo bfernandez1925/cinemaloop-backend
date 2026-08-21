@@ -48,6 +48,15 @@ export function fetchPopularMovies(page: number): Promise<TmdbPage<TmdbMovieSumm
   return tmdbFetch("/movie/popular", { page: String(page) });
 }
 
+/** Películas filtradas por género (CIN-54: pool infantil vía Familia/
+ * Animación) — mismo shape de resultado que `/movie/popular`. */
+export function discoverMoviesByGenre(
+  genreIds: number[],
+  page: number,
+): Promise<TmdbPage<TmdbMovieSummary>> {
+  return tmdbFetch("/discover/movie", { with_genres: genreIds.join(","), page: String(page) });
+}
+
 export function fetchPopularPeople(page: number): Promise<TmdbPage<TmdbPersonSummary>> {
   return tmdbFetch("/person/popular", { page: String(page) });
 }
@@ -76,7 +85,18 @@ export function fetchPersonMovieCredits(id: number): Promise<{ cast: Array<{ id:
   return tmdbFetch(`/person/${id}/movie_credits`);
 }
 
+/** Un miembro del reparto tal cual lo devuelve /movie/{id}/credits — TMDb
+ * ya incluye name/popularity/profile_path en cada entrada, sin necesitar
+ * una llamada aparte a /person/{id} (usado para derivar el pool de
+ * actores infantiles a partir del reparto de películas infantiles, CIN-54). */
+export interface TmdbCastMember {
+  id: number;
+  name: string;
+  popularity: number;
+  profile_path: string | null;
+}
+
 /** Reparto de una película. */
-export function fetchMovieCredits(id: number): Promise<{ cast: Array<{ id: number }> }> {
+export function fetchMovieCredits(id: number): Promise<{ cast: TmdbCastMember[] }> {
   return tmdbFetch(`/movie/${id}/credits`);
 }

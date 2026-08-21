@@ -55,3 +55,31 @@ export const MAX_AMBIGUOUS_CANDIDATES = 3;
  * tiempo que el resto del sistema.
  */
 export const PERSON_CREDITS_CACHE_TTL_SECONDS = 7 * 24 * 60 * 60;
+
+/**
+ * Pool infantil (CIN-54): géneros de TMDb usados para `/discover/movie`
+ * en vez de `/movie/popular` — Familia (10751) y Animación (16), los
+ * dos géneros de TMDb más directamente asociados a contenido apto para
+ * niños. No hay un "género infantil" único en TMDb, así que se combinan
+ * estos dos en vez de depender de la certificación por edad (cobertura
+ * pobre para España).
+ */
+export const KIDS_MOVIE_GENRE_IDS = [10751, 16];
+
+/**
+ * Tamaño objetivo del pool infantil — deliberadamente menor que el pool
+ * general (TMDB_POOL_TARGET_SIZE=750): es un modo más nicho, y cada
+ * película descubierta cuesta una llamada adicional a /credits para
+ * derivar actores (ver refreshTmdbPool), así que un pool más pequeño
+ * evita disparar el volumen de llamadas semanales sin necesidad real.
+ */
+export const KIDS_POOL_TARGET_SIZE = 200;
+
+/** Misma proporción película/persona que el pool general. */
+export const KIDS_POOL_MOVIE_SHARE = TMDB_POOL_MOVIE_SHARE;
+
+/** Cuántos miembros del reparto (por orden de aparición, ya viene
+ * ordenado así desde TMDb) se toman de cada película infantil al
+ * derivar actores — limita el pool a los protagonistas reales, no a
+ * todo el reparto secundario. */
+export const KIDS_POOL_CAST_PER_MOVIE = 10;

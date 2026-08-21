@@ -20,9 +20,13 @@ export interface ActorNode extends PoolEntity {
 
 export type GameNode = PoolEntity | ActorNode;
 
-export type GameMode = "clasico" | "contrarreloj" | "maraton";
+// "infantil" (CIN-54) reutiliza toda la mecánica de "clasico" (turno de
+// 25s, bonus de rapidez, sin límite de cadena) — solo cambia el pool de
+// inicio (tmdbPool/infantil en vez de tmdbPool/current, ver
+// refreshTmdbPool/startGame), así que comparte esos condicionales.
+export type GameMode = "clasico" | "contrarreloj" | "maraton" | "infantil";
 
-export const GAME_MODES: GameMode[] = ["clasico", "contrarreloj", "maraton"];
+export const GAME_MODES: GameMode[] = ["clasico", "contrarreloj", "maraton", "infantil"];
 
 /** Extrae el año de un `birthday` de TMDb ("YYYY-MM-DD"), o null si no hay. */
 export function extractBirthYear(birthday: string | null | undefined): number | null {

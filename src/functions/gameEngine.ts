@@ -4,10 +4,13 @@ import { db } from "../admin";
 import { ANTHROPIC_API_KEY, normalizeAnswer } from "../clients/claude";
 import {
   TMDB_API_KEY,
+  discoverMoviesByGenre,
+  fetchMovieCredits,
   fetchPopularMovies,
   fetchPopularPeople,
   searchMovies,
   searchPeople,
+  type TmdbCastMember,
   type TmdbMovieSummary,
   type TmdbPersonSummary,
 } from "../clients/tmdb";
@@ -20,6 +23,10 @@ import {
 import {
   AMBIGUITY_POPULARITY_RATIO,
   CONTRARRELOJ_TOTAL_TIME_LIMIT_SECONDS,
+  KIDS_MOVIE_GENRE_IDS,
+  KIDS_POOL_CAST_PER_MOVIE,
+  KIDS_POOL_MOVIE_SHARE,
+  KIDS_POOL_TARGET_SIZE,
   MARATHON_INACTIVITY_TIMEOUT_SECONDS,
   MAX_AMBIGUOUS_CANDIDATES,
   PERSON_CREDITS_CACHE_TTL_SECONDS,
@@ -94,11 +101,64 @@ async function collectPopularPeople(targetCount: number): Promise<PoolEntity[]> 
   return collected.slice(0, targetCount);
 }
 
+function castMemberToPoolEntity(member: TmdbCastMember): PoolEntity {
+  return {
+    tipo: "actor",
+    entidad_tmdb_id: member.id,
+    nombre: member.name,
+    imagen: member.profile_path,
+  };
+}
+
+/**
+ * Pool infantil (CIN-54): películas de género Familia/Animación en vez
+ * de "populares" genéricas, con los actores derivados del reparto de
+ * esas mismas películas — TMDb no tiene un filtro de género para
+ * personas, así que no hay un equivalente a collectPopularPeople aquí.
+ * Sin heurística adicional: cualquier actor del pool tiene garantizado
+ * al menos una película familiar/animada conocida, precisamente la que
+ * lo trajo al pool.
+ */
+async function collectKidsPool(
+  movieTarget: number,
+  peopleTarget: number,
+): Promise<{ movies: PoolEntity[]; people: PoolEntity[] }> {
+  const movies: PoolEntity[] = [];
+  const peopleById = new Map<number, PoolEntity>();
+
+  for (
+    let page = 1;
+    page <= TMDB_POPULAR_MAX_PAGES && movies.length < movieTarget && peopleById.size < peopleTarget;
+    page++
+  ) {
+    const { results, total_pages } = await discoverMoviesByGenre(KIDS_MOVIE_GENRE_IDS, page);
+    for (const movie of results) {
+      if (movies.length >= movieTarget) break;
+      movies.push(movieToPoolEntity(movie));
+
+      if (peopleById.size < peopleTarget) {
+        const { cast } = await fetchMovieCredits(movie.id);
+        for (const member of cast.slice(0, KIDS_POOL_CAST_PER_MOVIE)) {
+          if (!peopleById.has(member.id)) {
+            peopleById.set(member.id, castMemberToPoolEntity(member));
+          }
+        }
+      }
+    }
+    if (page >= total_pages) {
+      break;
+    }
+  }
+
+  return { movies, people: [...peopleById.values()].slice(0, peopleTarget) };
+}
+
 /**
  * Construye y cachea el pool de entidades "populares" de TMDb usado por
- * startGame (500-1000 entidades, ver spec-game-engine.md). Se refresca
- * semanalmente sin intervención manual; startGame solo lee de
- * `tmdbPool/current`, sin llamar a TMDb en cada partida.
+ * startGame (500-1000 entidades, ver spec-game-engine.md), junto al
+ * pool infantil (CIN-54, `tmdbPool/infantil`). Se refresca semanalmente
+ * sin intervención manual; startGame solo lee del pool correspondiente
+ * al modo, sin llamar a TMDb en cada partida.
  */
 export const refreshTmdbPool = onSchedule(
   { schedule: "every monday 03:00", secrets: [TMDB_API_KEY] },
@@ -110,12 +170,26 @@ export const refreshTmdbPool = onSchedule(
     const movies = await collectPopularMovies(movieTarget);
     const people = await collectPopularPeople(TMDB_POOL_TARGET_SIZE - movies.length);
 
+    const kidsMovieTarget = Math.round(KIDS_POOL_TARGET_SIZE * KIDS_POOL_MOVIE_SHARE);
+    const kidsPool = await collectKidsPool(
+      kidsMovieTarget,
+      KIDS_POOL_TARGET_SIZE - kidsMovieTarget,
+    );
+
+    const actualizadoEn = new Date().toISOString();
     await db
       .collection("tmdbPool")
       .doc("current")
       .set({
         entidades: [...movies, ...people],
-        actualizado_en: new Date().toISOString(),
+        actualizado_en: actualizadoEn,
+      });
+    await db
+      .collection("tmdbPool")
+      .doc("infantil")
+      .set({
+        entidades: [...kidsPool.movies, ...kidsPool.people],
+        actualizado_en: actualizadoEn,
       });
   },
 );
@@ -139,7 +213,10 @@ export const startGame = onCall({ secrets: [TMDB_API_KEY] }, async (request) => 
     throw new HttpsError("invalid-argument", `modo debe ser uno de: ${GAME_MODES.join(", ")}.`);
   }
 
-  const poolSnapshot = await db.collection("tmdbPool").doc("current").get();
+  // Infantil lee de su propio pool curado por género (CIN-54); el resto
+  // de modos comparte el pool general.
+  const poolDoc = modo === "infantil" ? "infantil" : "current";
+  const poolSnapshot = await db.collection("tmdbPool").doc(poolDoc).get();
   const entidades = (poolSnapshot.data()?.entidades ?? []) as PoolEntity[];
   if (entidades.length === 0) {
     throw new HttpsError(
@@ -367,11 +444,12 @@ export const submitAnswer = onCall(
       nuevoNodo = toActorNode(nuevoNodo, detalles);
     }
 
-    // El bonus de rapidez está atado al límite de turno de modo Clásico
-    // (25s); Contrarreloj y Maratón no tienen límite por turno, así que
-    // no tiene sentido aplicarlo — solo puntos base en esos modos.
+    // El bonus de rapidez está atado al límite de turno de 25s (Clásico
+    // e Infantil, que comparte su mecánica — CIN-54); Contrarreloj y
+    // Maratón no tienen límite por turno, así que no tiene sentido
+    // aplicarlo — solo puntos base en esos modos.
     const bonus =
-      game.modo === "clasico"
+      game.modo === "clasico" || game.modo === "infantil"
         ? calculateSpeedBonus(TURN_TIME_LIMIT_SECONDS - tiempo_respuesta_segundos)
         : 0;
     const puntos = BASE_POINTS_PER_CORRECT_ANSWER + bonus;
