@@ -44,3 +44,14 @@ export const AMBIGUITY_POPULARITY_RATIO = 0.85;
 
 /** Tope de candidatos ambiguos mostrados al jugador (spec-game-engine.md: "2-3 candidatos"). */
 export const MAX_AMBIGUOUS_CANDIDATES = 3;
+
+/**
+ * Caché de datos de TMDb en Firestore (CIN-53), para reducir llamadas
+ * repetidas a la API según el algoritmo documentado en
+ * src/lib/tmdbCache.ts. No especificado en la spec ("a definir el TTL
+ * al implementar" — issue del propio propietario); se fija en 7 días,
+ * el mismo ritmo que ya usa `refreshTmdbPool` para el pool general, así
+ * la filmografía de una persona nunca queda desactualizada por más
+ * tiempo que el resto del sistema.
+ */
+export const PERSON_CREDITS_CACHE_TTL_SECONDS = 7 * 24 * 60 * 60;

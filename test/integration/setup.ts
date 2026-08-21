@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, vi } from "vitest";
+import { db } from "../../src/admin";
 
 // Claves de pega para los tests: SecretParam.value() de
 // firebase-functions/params lee directamente de process.env en runtime.
@@ -24,4 +25,24 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+});
+
+// La caché de TMDb (CIN-53, ver src/clients/tmdbCache.ts) persiste en
+// Firestore entre tests dentro de la misma ejecución del emulador —
+// varios tests existentes reutilizan deliberadamente el mismo
+// entidad_tmdb_id (p. ej. 7) como fixture con un mock de `fetch`
+// distinto cada vez. Sin limpiar la caché entre tests, el primero que
+// toque un id la deja escrita y los siguientes leerían ese valor
+// obsoleto en vez de llamar a su propio mock.
+const TMDB_CACHE_COLLECTIONS = [
+  "tmdbCacheMovies",
+  "tmdbCacheMovieCredits",
+  "tmdbCachePeople",
+  "tmdbCachePersonCredits",
+];
+
+afterEach(async () => {
+  await Promise.all(
+    TMDB_CACHE_COLLECTIONS.map((collection) => db.recursiveDelete(db.collection(collection))),
+  );
 });
